@@ -1,0 +1,66 @@
+{
+  "productName": "ZeitWerk",
+  "appId": "de.jugendhaus.zeitwerk-app",
+  "versionSource": "package.json",
+  "entry": "electron/main-json.js",
+  "files": [
+    {
+      "group": "Electron Main Process",
+      "patterns": [
+        "electron/main-json.js",
+        "electron/preload.js"
+      ],
+      "purpose": "App lifecycle, IPC bridge, secure preload context"
+    },
+    {
+      "group": "JSON Database Layer",
+      "patterns": [
+        "electron/database/**/*.js",
+        "electron/database/**/*.json"
+      ],
+      "purpose": "Serverless persistence (no external DB required)"
+    },
+    {
+      "group": "Frontend Build Output",
+      "patterns": [
+        "frontend/dist/index.html",
+        "frontend/dist/assets/**/*"
+      ],
+      "purpose": "Optimized React UI bundle served locally"
+    },
+    {
+      "group": "Assets",
+      "patterns": [
+        "frontend/public/ZeitWerk-Logo.png",
+        "electron/assets/tray-icon.png"
+      ],
+      "purpose": "Window / tray icons (PNG will be converted for Windows)"
+    },
+    {
+      "group": "Runtime Metadata",
+      "patterns": [
+        "package.json"
+      ],
+      "purpose": "electron-builder reads version, name, build config"
+    }
+  ],
+  "excluded": [
+    "backend/**",
+    "frontend/src/**",
+    "**/*.map",
+    "**/*.ts",
+    "**/*.tsx",
+    "**/test/**",
+    "**/*.spec.*",
+    "**/README*",
+    "**/docs/**",
+    "CLEANUP-ANALYSE.md",
+    "INSTALLATION-ANLEITUNG.md",
+    "COMPLETE-INSTALLER-GUIDE.md"
+  ],
+  "notes": {
+    "autoUpdate": "electron-updater configured; requires publish provider + signed releases to function.",
+    "icons": "For best Windows quality create a multi-size ICO (16,32,48,64,128,256) and update win.icon if added.",
+    "scope": "Backend excluded because JSON mode is self-contained."
+  }
+}

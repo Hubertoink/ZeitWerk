@@ -1,0 +1,31 @@
+# Node
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Logs
+logs/
+*.log
+
+# Editor/OS
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Vite build output
+frontend/dist/
+
+# Electron build output
+/dist-electron/
+/dist/
+
+# Env files
+.env
+.env.*.local
+
+# Misc
+*.local
+*.swp

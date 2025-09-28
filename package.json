@@ -1,0 +1,132 @@
+{
+  "name": "zeitwerk-app",
+  "version": "1.3.4",
+  "description": "ZeitWerk - Moderne Dienstplan-App für die Jugendarbeit",
+  "main": "electron/main-json.js",
+  "homepage": "./",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:frontend\" \"wait-on http://localhost:3000 && npm run electron:json\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:backend:sqlite": "cd backend && npm run dev:sqlite",
+    "dev:serverless": "concurrently \"npm run dev:frontend\" \"wait-on http://localhost:3000 && npm run electron:serverless\"",
+    "dev:json": "concurrently \"npm run dev:frontend\" \"wait-on http://localhost:3000 && npm run electron:json\"",
+    "build": "npm run build:frontend",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "install:all": "npm install && npm run install:frontend && npm run install:backend",
+    "install:frontend": "cd frontend && npm install",
+    "install:backend": "cd backend && npm install",
+    "test": "npm run test:frontend && npm run test:backend",
+    "test:frontend": "cd frontend && npm test",
+    "test:backend": "cd backend && npm test",
+    "electron": "electron .",
+    "electron:json": "electron electron/main-json.js",
+    "electron:serverless": "electron electron/main-serverless.js",
+    "electron:serverless:dev": "electron electron/main-serverless.js --dev",
+    "electron:dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\" \"wait-on http://localhost:3000 http://localhost:5000 && electron .\"",
+    "electron:build": "npm run build && electron-builder",
+    "electron:pack": "electron-builder --dir",
+    "electron:dist": "npm run clean:db && npm run build && electron-builder",
+    "clean:db": "node electron/cleanup-db.js",
+    "electron:dist:win": "npm run build && electron-builder --win",
+    "electron:dist:json": "npm run build && electron-builder",
+    "electron:dist:serverless": "npm run build && electron-builder --config.main=electron/main-serverless.js",
+    "desktop:setup": "npm run install:all && npm run build"
+  },
+  "build": {
+    "appId": "de.jugendhaus.zeitwerk-app",
+    "productName": "ZeitWerk",
+    "asar": true,
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/main-json.js",
+      "electron/preload.js",
+      "electron/preload-serverless.js",
+      "electron/database/**/*",
+      "electron/utils/**/*",
+      "electron/assets/tray-icon.png",
+      "electron/assets/icon.png",
+      "frontend/dist/**/*",
+      "package.json",
+      "!frontend/src/**",
+      "!**/*.map",
+      "!**/*.ts",
+      "!**/*.tsx",
+      "!**/test?(s)/**",
+      "!**/*.spec.*",
+      "!**/docs/**",
+      "!**/README*"
+    ],
+    "artifactName": "${productName} Setup ${version}.${ext}",
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "frontend/public/ZeitWerk-Logo.png",
+  "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ZeitWerk",
+      "displayLanguageSelector": false,
+      "installerLanguages": ["de_DE"],
+      "language": "1031"
+    },
+    "portable": {
+      "artifactName": "ZeitWerk-Portable-${version}.exe"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "frontend/public/ZeitWerk-Logo.png",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "frontend/public/ZeitWerk-Logo.png",
+      "category": "Office"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://updates.example.com/zeitwerk"
+      }
+    ]
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "cross-env": "^10.0.0",
+    "electron": "^37.4.0",
+    "electron-builder": "^26.0.12",
+    "wait-on": "^8.0.4"
+  },
+  "workspaces": [
+    "frontend"
+  ],
+  "keywords": [
+    "dienstplan",
+    "jugendarbeit",
+    "shift-planning",
+    "employee-management",
+    "react",
+    "typescript",
+    "nodejs",
+    "postgresql",
+    "desktop-app",
+    "electron"
+  ],
+  "author": "Jugendhaus Team",
+  "license": "MIT",
+  "dependencies": {
+    "electron-updater": "^6.1.7"
+  }
+}
