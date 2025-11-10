@@ -54,6 +54,15 @@ interface EmployeeFormData {
   organizationId: string;
   notes?: string;
   weeklyHours?: string; // Eingabe als Text, Speicherung als Zahl
+  dailyHoursPlan?: {
+    mon?: string;
+    tue?: string;
+    wed?: string;
+    thu?: string;
+    fri?: string;
+    sat?: string;
+    sun?: string;
+  };
 }
 
 const EmployeeList: React.FC = () => {
@@ -80,7 +89,8 @@ const EmployeeList: React.FC = () => {
     hireDate: '',
     organizationId: '',
     notes: '',
-    weeklyHours: ''
+    weeklyHours: '',
+    dailyHoursPlan: { mon: '', tue: '', wed: '', thu: '', fri: '', sat: '', sun: '' }
   });
 
   useEffect(() => {
@@ -130,7 +140,16 @@ const EmployeeList: React.FC = () => {
         hireDate: employee.hireDate ? employee.hireDate.split('T')[0] : '',
         organizationId: employee.organizationId || '',
         notes: employee.notes || '',
-        weeklyHours: (typeof employee.weeklyHours === 'number' && !isNaN(employee.weeklyHours)) ? String(employee.weeklyHours) : ''
+        weeklyHours: (typeof employee.weeklyHours === 'number' && !isNaN(employee.weeklyHours)) ? String(employee.weeklyHours) : '',
+        dailyHoursPlan: {
+          mon: employee.dailyHoursPlan?.mon != null ? String(employee.dailyHoursPlan.mon) : '',
+          tue: employee.dailyHoursPlan?.tue != null ? String(employee.dailyHoursPlan.tue) : '',
+          wed: employee.dailyHoursPlan?.wed != null ? String(employee.dailyHoursPlan.wed) : '',
+          thu: employee.dailyHoursPlan?.thu != null ? String(employee.dailyHoursPlan.thu) : '',
+          fri: employee.dailyHoursPlan?.fri != null ? String(employee.dailyHoursPlan.fri) : '',
+          sat: employee.dailyHoursPlan?.sat != null ? String(employee.dailyHoursPlan.sat) : '',
+          sun: employee.dailyHoursPlan?.sun != null ? String(employee.dailyHoursPlan.sun) : ''
+        }
       });
     } else {
       setEditingEmployee(null);
@@ -148,7 +167,8 @@ const EmployeeList: React.FC = () => {
         hireDate: '',
         organizationId: defaultOrgId,
         notes: '',
-        weeklyHours: ''
+        weeklyHours: '',
+        dailyHoursPlan: { mon: '', tue: '', wed: '', thu: '', fri: '', sat: '', sun: '' }
       });
     }
     setOpen(true);
@@ -157,7 +177,8 @@ const EmployeeList: React.FC = () => {
   const hasFormData = () => {
     return formData.firstName.trim() || formData.lastName.trim() || formData.email.trim() || 
            formData.phone.trim() || formData.position.trim() || formData.department.trim() ||
-           formData.notes?.trim() || formData.weeklyHours?.trim();
+           formData.notes?.trim() || formData.weeklyHours?.trim() ||
+           Object.values(formData.dailyHoursPlan || {}).some(v => (v || '').trim() !== '');
   };
 
   const handleCloseDialog = () => {
@@ -210,6 +231,18 @@ const EmployeeList: React.FC = () => {
           delete payload.weeklyHours;
         }
       }
+      // Parse dailyHoursPlan strings to numbers; remove empty
+      if (payload.dailyHoursPlan) {
+        const plan = payload.dailyHoursPlan;
+        const parsed: any = {};
+        const keys = ['mon','tue','wed','thu','fri','sat','sun'] as const;
+        keys.forEach((k) => {
+          const v = (plan?.[k] || '').replace?.(',', '.') ?? '';
+          const n = parseFloat(v);
+          if (!isNaN(n) && isFinite(n) && n >= 0) parsed[k] = n;
+        });
+        if (Object.keys(parsed).length > 0) payload.dailyHoursPlan = parsed; else delete payload.dailyHoursPlan;
+      }
       if (editingEmployee) {
         await dispatch(updateEmployee({ id: editingEmployee.id, data: payload })).unwrap();
         setSnackbar({ open: true, message: 'Mitarbeiter erfolgreich aktualisiert', severity: 'success' });
@@ -234,7 +267,8 @@ const EmployeeList: React.FC = () => {
         hireDate: '',
         organizationId: '',
         notes: '',
-        weeklyHours: ''
+        weeklyHours: '',
+        dailyHoursPlan: { mon: '', tue: '', wed: '', thu: '', fri: '', sat: '', sun: '' }
       });
       setEditingEmployee(null);
       setOpen(false);
@@ -270,6 +304,22 @@ const EmployeeList: React.FC = () => {
   const departments = ['Offener Bereich', 'Beratung', 'Verwaltung', 'Küche', 'Hausmeisterei'];
   const positions = ['Jugendarbeiter', 'Sozialpädagoge', 'Praktikant', 'Leitung', 'Verwaltung', 'Koch'];
 
+  const formatDailyPlanSummary = (plan?: {
+    mon?: number; tue?: number; wed?: number; thu?: number; fri?: number; sat?: number; sun?: number;
+  }) => {
+    if (!plan) return '—';
+    const order: Array<keyof typeof plan> = ['mon','tue','wed','thu','fri','sat','sun'];
+    const labels: Record<string, string> = { mon: 'Mo', tue: 'Di', wed: 'Mi', thu: 'Do', fri: 'Fr', sat: 'Sa', sun: 'So' };
+    const parts = order.map((k) => {
+      const v = (plan as any)[k];
+      if (typeof v === 'number' && isFinite(v) && v >= 0) {
+        return `${labels[k]} ${v.toLocaleString('de-DE', { maximumFractionDigits: 2 })}`;
+      }
+      return `${labels[k]} –`;
+    });
+    return parts.join(' • ');
+  };
+
   // Gefilterte Mitarbeiterliste basierend auf Suchbegriff
   const filteredEmployees = employees.filter((employee: any) => {
     if (!searchTerm) return true;
@@ -296,6 +346,7 @@ const EmployeeList: React.FC = () => {
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
+          sx={{ mt: 1 }}
         >
           Neuer Mitarbeiter
         </Button>
@@ -337,6 +388,7 @@ const EmployeeList: React.FC = () => {
               <TableCell>Kontakt</TableCell>
               <TableCell>Eintrittsdatum</TableCell>
               <TableCell>Wochenarbeitszeit</TableCell>
+              <TableCell>Tagesplan</TableCell>
               <TableCell>Aktionen</TableCell>
             </TableRow>
           </TableHead>
@@ -395,6 +447,11 @@ const EmployeeList: React.FC = () => {
                   {typeof employee.weeklyHours === 'number' && !isNaN(employee.weeklyHours)
                     ? `${employee.weeklyHours.toString().replace('.', ',')} Std`
                     : '—'}
+                </TableCell>
+                <TableCell>
+                  <Typography variant="body2">
+                    {formatDailyPlanSummary(employee.dailyHoursPlan)}
+                  </Typography>
                 </TableCell>
                 <TableCell>
                   <Box display="flex" gap={1}>
@@ -526,6 +583,59 @@ const EmployeeList: React.FC = () => {
               placeholder="z. B. 38,5"
               fullWidth
             />
+            {/* Tagesarbeitszeit Plan (netto) */}
+            <Box>
+              <Typography variant="subtitle1" sx={{ mb: 1, fontWeight: 600 }}>
+                Tagesarbeitszeit (Std, netto)
+              </Typography>
+              <Box display="grid" gridTemplateColumns={{ xs: '1fr 1fr', sm: 'repeat(4, 1fr)' }} gap={1.5}>
+                {[
+                  { key: 'mon', label: 'Mo' },
+                  { key: 'tue', label: 'Di' },
+                  { key: 'wed', label: 'Mi' },
+                  { key: 'thu', label: 'Do' },
+                  { key: 'fri', label: 'Fr' },
+                  { key: 'sat', label: 'Sa' },
+                  { key: 'sun', label: 'So' }
+                ].map((d: any) => (
+                  <TextField
+                    key={d.key}
+                    label={d.label}
+                    value={(formData.dailyHoursPlan as any)?.[d.key] || ''}
+                    onChange={(e) => setFormData(prev => ({
+                      ...prev,
+                      dailyHoursPlan: { ...(prev.dailyHoursPlan || {}), [d.key]: e.target.value }
+                    }))}
+                    placeholder="z. B. 7,7"
+                    inputProps={{ inputMode: 'decimal' }}
+                  />
+                ))}
+              </Box>
+              {/* Summe und Abgleich */}
+              {(() => {
+                const vals = formData.dailyHoursPlan || {} as any;
+                const toNum = (v?: string) => {
+                  if (!v) return 0;
+                  const n = parseFloat(v.replace(',', '.'));
+                  return isNaN(n) ? 0 : n;
+                };
+                const sum = toNum(vals.mon) + toNum(vals.tue) + toNum(vals.wed) + toNum(vals.thu) + toNum(vals.fri) + toNum(vals.sat) + toNum(vals.sun);
+                const weekly = formData.weeklyHours ? parseFloat(formData.weeklyHours.replace(',', '.')) : undefined;
+                const mismatch = typeof weekly === 'number' && !isNaN(weekly) && Math.abs(sum - weekly) > 0.05;
+                return (
+                  <Box mt={1}>
+                    <Typography variant="body2">
+                      Summe: {sum.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} Std{weekly != null ? ` / Soll: ${weekly.toLocaleString('de-DE', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} Std` : ''}
+                    </Typography>
+                    {mismatch && (
+                      <Alert severity="warning" sx={{ mt: 1 }}>
+                        Die Summe der Tagesstunden weicht von der Wochenarbeitszeit ab. Das Speichern ist trotzdem möglich.
+                      </Alert>
+                    )}
+                  </Box>
+                );
+              })()}
+            </Box>
             <TextField
               label="Eintrittsdatum"
               type="date"

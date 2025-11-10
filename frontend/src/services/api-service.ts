@@ -11,6 +11,80 @@ const API_BASE = 'http://localhost:5001/api';
 
 // Universal API Service that works in both Electron and Web environments
 class APIService {
+  // Simple in-memory caches to reduce repeated IPC calls (Electron only)
+  private _cacheEmployees: { data: Employee[]; ts: number } | null = null;
+  private _cacheShiftTypes: { data: ShiftType[]; ts: number } | null = null;
+  private _cacheTTLms = 60_000; // 60s TTL
+
+  private isCacheValid(entry: { ts: number } | null): boolean {
+    return !!entry && (Date.now() - entry.ts) < this._cacheTTLms;
+  }
+
+  private async getEmployeesCached(): Promise<Employee[]> {
+    if (isElectronApp()) {
+      if (this.isCacheValid(this._cacheEmployees)) {
+        return this._cacheEmployees!.data;
+      }
+      const rawEmployees = await (window as any).electronAPI.getEmployees();
+      const mapped: Employee[] = rawEmployees.map((emp: any) => ({
+        id: emp.id.toString(),
+        firstName: emp.firstName,
+        lastName: emp.lastName,
+        email: emp.email,
+        phone: emp.phone,
+        photoUrl: emp.photoUrl || undefined,
+        photoPath: emp.photoPath || undefined,
+        employeeNumber: emp.employeeNumber || '',
+        position: emp.position || '',
+        department: emp.department || '',
+        hireDate: emp.hireDate || new Date().toISOString(),
+        organizationId: emp.organizationId.toString(),
+        isActive: emp.isActive,
+        notes: emp.notes || '',
+        weeklyHours: typeof emp.weeklyHours === 'number' ? emp.weeklyHours : (emp.weeklyHours ? parseFloat(emp.weeklyHours) : undefined),
+        dailyHoursPlan: emp.dailyHoursPlan || undefined,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }));
+      this._cacheEmployees = { data: mapped, ts: Date.now() };
+      return mapped;
+    }
+    // HTTP mode: no caching here to respect server freshness
+    const response = await fetch(`${API_BASE}/employees`);
+    if (!response.ok) throw new Error('Failed to fetch employees');
+    return await response.json();
+  }
+
+  private async getShiftTypesCached(): Promise<ShiftType[]> {
+    if (isElectronApp()) {
+      if (this.isCacheValid(this._cacheShiftTypes)) {
+        return this._cacheShiftTypes!.data;
+      }
+      const rawShiftTypes = await (window as any).electronAPI.getShiftTypes();
+      const mapped: ShiftType[] = rawShiftTypes.map((type: any) => ({
+        id: type.id.toString(),
+        name: type.name,
+        color: type.color,
+        startTime: type.startTime,
+        endTime: type.endTime,
+        isFlexible: type.isFlexible,
+        isAllDay: type.isAllDay,
+        countsTowardHours: type.countsTowardHours,
+        description: type.description || '',
+        organizationId: type.organizationId ? type.organizationId.toString() : null,
+        category: type.category || 'regular',
+        priority: type.priority || 1,
+        isActive: type.isActive,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }));
+      this._cacheShiftTypes = { data: mapped, ts: Date.now() };
+      return mapped;
+    }
+    const response = await fetch(`${API_BASE}/shift-types`);
+    if (!response.ok) throw new Error('Failed to fetch shift types');
+    return await response.json();
+  }
   
   async getOrganizations(): Promise<OrganizationUnit[]> {
     if (isElectronApp()) {
@@ -55,6 +129,7 @@ class APIService {
         isActive: emp.isActive,
         notes: emp.notes || '',
         weeklyHours: typeof emp.weeklyHours === 'number' ? emp.weeklyHours : (emp.weeklyHours ? parseFloat(emp.weeklyHours) : undefined),
+        dailyHoursPlan: emp.dailyHoursPlan || undefined,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       }));
@@ -174,7 +249,8 @@ class APIService {
         organizationId: parseInt(employee.organizationId),
         isActive: employee.isActive,
         notes: (employee as any).notes,
-        weeklyHours: (employee as any).weeklyHours
+        weeklyHours: (employee as any).weeklyHours,
+        dailyHoursPlan: (employee as any).dailyHoursPlan
       };
       
       const rawEmp = await (window as any).electronAPI.createEmployee(empToCreate);
@@ -195,6 +271,7 @@ class APIService {
         isActive: rawEmp.isActive,
         notes: rawEmp.notes || '',
         weeklyHours: typeof rawEmp.weeklyHours === 'number' ? rawEmp.weeklyHours : (rawEmp.weeklyHours ? parseFloat(rawEmp.weeklyHours) : undefined),
+        dailyHoursPlan: rawEmp.dailyHoursPlan || undefined,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -226,6 +303,7 @@ class APIService {
       if (employee.isActive !== undefined) empToUpdate.isActive = employee.isActive;
       if ((employee as any).notes !== undefined) empToUpdate.notes = (employee as any).notes;
       if ((employee as any).weeklyHours !== undefined) empToUpdate.weeklyHours = (employee as any).weeklyHours;
+      if ((employee as any).dailyHoursPlan !== undefined) empToUpdate.dailyHoursPlan = (employee as any).dailyHoursPlan;
       
       const rawEmp = await (window as any).electronAPI.updateEmployee(parseInt(id), empToUpdate);
       
@@ -245,6 +323,7 @@ class APIService {
         isActive: rawEmp.isActive,
         notes: rawEmp.notes || '',
         weeklyHours: typeof rawEmp.weeklyHours === 'number' ? rawEmp.weeklyHours : (rawEmp.weeklyHours ? parseFloat(rawEmp.weeklyHours) : undefined),
+        dailyHoursPlan: rawEmp.dailyHoursPlan || undefined,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -406,10 +485,9 @@ class APIService {
   async getShifts(): Promise<Shift[]> {
     if (isElectronApp()) {
       const rawShifts = await (window as any).electronAPI.getShifts();
-      
-      // Get shift types and employees for enrichment
-      const rawShiftTypes = await (window as any).electronAPI.getShiftTypes();
-      const rawEmployees = await (window as any).electronAPI.getEmployees();
+      // Get shift types and employees for enrichment (cached to avoid repeated IPC calls)
+      const rawShiftTypes = await this.getShiftTypesCached();
+      const rawEmployees = await this.getEmployeesCached();
       
       return rawShifts.map((shift: any) => {
         // Sicherheit: Prüfe auf undefined/null Werte
@@ -418,8 +496,8 @@ class APIService {
         const organizationId = shift.organizationId || shift.organization_id;
         
         // Find shift type info
-        const shiftType = rawShiftTypes.find((st: any) => st.id === shiftTypeId);
-        const employee = rawEmployees.find((emp: any) => emp.id === employeeId);
+        const shiftType = (rawShiftTypes as any[]).find((st: any) => (st.id === (shiftTypeId?.toString?.() || shiftTypeId)) || (st.id?.toString?.() === (shiftTypeId?.toString?.())));
+        const employee = (rawEmployees as any[]).find((emp: any) => (emp.id === (employeeId?.toString?.() || employeeId)) || (emp.id?.toString?.() === (employeeId?.toString?.())));
         
         return {
           id: shift.id ? shift.id.toString() : '',

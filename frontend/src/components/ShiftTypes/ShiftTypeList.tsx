@@ -60,6 +60,25 @@ function applyGermanBreaks(totalMinutes: number): { breakMinutes: number; netMin
   return { breakMinutes, netMinutes: net };
 }
 
+// Treat 00:00 as 24:00 when start > 0 on same day
+function durationWithMidnight(startStr?: string, endStr?: string): number {
+  const s = parseTimeToMinutes(startStr);
+  let e = parseTimeToMinutes(endStr);
+  if (e === 0 && s > 0 && (endStr === '00:00' || endStr === '0:00' || endStr === '00:0' || endStr === '00:00')) {
+    e = 24 * 60;
+  }
+  return Math.max(0, e - s);
+}
+
+function endDisplayWithMidnight(startStr?: string, endStr?: string): string {
+  const s = parseTimeToMinutes(startStr);
+  const e = parseTimeToMinutes(endStr);
+  if (e === 0 && s > 0 && (endStr === '00:00' || endStr === '0:00' || endStr === '00:0' || endStr === '00:00')) {
+    return '24:00';
+  }
+  return endStr || '';
+}
+
 function minutesToHM(mins: number): string {
   const n = Math.max(0, mins);
   const h = Math.floor(n / 60);
@@ -333,15 +352,13 @@ const ShiftTypeList: React.FC = () => {
                   <Typography variant="body2">
                     {shiftType.isAllDay ? 'Ganztägig' : (shiftType.isFlexible 
                       ? 'Flexible Zeiten' 
-                      : `${shiftType.startTime || 'N/A'} - ${shiftType.endTime || 'N/A'}`)}
+                      : `${shiftType.startTime || 'N/A'} - ${endDisplayWithMidnight(shiftType.startTime, shiftType.endTime) || 'N/A'}`)}
                   </Typography>
                 </Box>
                 {/* Break/Net info for fixed-time non-all-day types */}
                 {!shiftType.isAllDay && !shiftType.isFlexible && (shiftType.startTime && shiftType.endTime) && (
                   (() => {
-                    const s = parseTimeToMinutes(shiftType.startTime);
-                    const e = parseTimeToMinutes(shiftType.endTime);
-                    const gross = Math.max(0, e - s);
+                    const gross = durationWithMidnight(shiftType.startTime, shiftType.endTime);
                     const { breakMinutes, netMinutes } = applyGermanBreaks(gross);
                     return (
                       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
@@ -366,7 +383,7 @@ const ShiftTypeList: React.FC = () => {
                       })}
                     />
                   )}
-                  {shiftType.countsTowardHours === false && (
+                  {(shiftType.countsTowardHours === false && !['Urlaub','Krankheit'].includes(shiftType.name)) && (
                     <Chip
                       size="small"
                       label="Zählt nicht zur Arbeitszeit"
@@ -427,13 +444,11 @@ const ShiftTypeList: React.FC = () => {
                     <TimeIcon fontSize="small" color="action" />
                     {shiftType.isAllDay ? 'Ganztägig' : (shiftType.isFlexible 
                       ? 'Flexible Zeiten' 
-                      : `${shiftType.startTime || 'N/A'} - ${shiftType.endTime || 'N/A'}`)}
+                      : `${shiftType.startTime || 'N/A'} - ${endDisplayWithMidnight(shiftType.startTime, shiftType.endTime) || 'N/A'}`)}
                   </Box>
                   {!shiftType.isAllDay && !shiftType.isFlexible && (shiftType.startTime && shiftType.endTime) && (
                     (() => {
-                      const s = parseTimeToMinutes(shiftType.startTime);
-                      const e = parseTimeToMinutes(shiftType.endTime);
-                      const gross = Math.max(0, e - s);
+                      const gross = durationWithMidnight(shiftType.startTime, shiftType.endTime);
                       const { breakMinutes, netMinutes } = applyGermanBreaks(gross);
                       return (
                         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
@@ -458,7 +473,7 @@ const ShiftTypeList: React.FC = () => {
                         })}
                       />
                     )}
-                    {shiftType.countsTowardHours === false && (
+                    {(shiftType.countsTowardHours === false && !['Urlaub','Krankheit'].includes(shiftType.name)) && (
                       <Chip
                         size="small"
                         label="Zählt nicht zur Arbeitszeit"
@@ -590,7 +605,7 @@ const ShiftTypeList: React.FC = () => {
                   onChange={handleSwitchChange('isAllDay')}
                 />
               }
-              label="Ganztägig (zählt nicht zur Arbeitszeit)"
+              label="Ganztägig"
             />
 
             <FormControlLabel
@@ -598,7 +613,7 @@ const ShiftTypeList: React.FC = () => {
                 <Switch
                   checked={formData.countsTowardHours}
                   onChange={handleSwitchChange('countsTowardHours')}
-                  disabled={formData.isAllDay || (editingShiftType && (editingShiftType.name === 'Urlaub' || editingShiftType.name === 'Krankheit'))}
+                  disabled={editingShiftType && (editingShiftType.name === 'Urlaub' || editingShiftType.name === 'Krankheit')}
                 />
               }
               label="Zählt zur Arbeitszeit"
@@ -630,9 +645,7 @@ const ShiftTypeList: React.FC = () => {
             {/* Live summary of gross/break/net when fixed times */}
             {!formData.isFlexible && !formData.isAllDay && (
               (() => {
-                const start = parseTimeToMinutes(formData.startTime);
-                const end = parseTimeToMinutes(formData.endTime);
-                const gross = Math.max(0, end - start);
+                const gross = durationWithMidnight(formData.startTime, formData.endTime);
                 const { breakMinutes, netMinutes } = applyGermanBreaks(gross);
                 return (
                   <Box sx={{

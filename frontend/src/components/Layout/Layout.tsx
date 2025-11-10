@@ -42,6 +42,7 @@ import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { logout } from '../../store/slices/authSlice';
 import { fetchOrganizations, setSelectedOrganization } from '../../store/slices/organizationSlice';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useSettings } from '../../contexts/SettingsContext';
 import { useTutorial } from '../../contexts/TutorialContext';
 
 interface LayoutProps {
@@ -57,8 +58,29 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const dispatch = useAppDispatch();
   const { organizations, selectedOrganization } = useAppSelector((state: any) => state.organizations);
   const { mode: themeMode, toggleMode } = useTheme();
+  const { settings } = useSettings();
   const { showTutorial } = useTutorial();
   const isDarkMode = themeMode === 'dark';
+
+  // Cluster-Farben für Menü-Icons
+  const getClusterColor = (id?: string) => {
+    const themed = (settings?.ui?.menuIconColor || 'monochrome') === 'themed';
+    if (!themed) return undefined;
+    return (theme: any) => {
+      // Farbzuordnung pro Cluster:
+      // - Dashboard: primary
+      // - Kalender (week/month): info
+      // - Mitarbeiter & Organisationen: success
+      // - Schichttypen: secondary
+      const palette = theme.palette;
+      if (id === 'dashboard') return palette.primary.main;
+      if (id === 'calendar' || id === 'week-view' || id === 'month-view') return palette.info.main;
+      if (id === 'employees' || id === 'organizations') return palette.success.main;
+      if (id === 'shift-types') return palette.secondary.main;
+      if (id === 'admin') return palette.warning.main;
+      return palette.text.primary;
+    };
+  };
   
   const [isCollapsed, setIsCollapsed] = useState(true); // Standard: collapsed
   const [openMenus, setOpenMenus] = useState<string[]>(['calendar']); // Kalender standardmäßig offen
@@ -190,7 +212,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   return (
     <Box sx={{ display: 'flex' }}>
       <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
-        <Toolbar>
+        <Toolbar sx={{
+          '& .MuiTypography-root': { color: (theme) => theme.palette.primary.contrastText },
+          '& .MuiSvgIcon-root': { color: (theme) => theme.palette.primary.contrastText },
+        }}>
           {/* ZeitWerk Logo */}
           <Box sx={{ display: 'flex', alignItems: 'center', mr: 2 }}>
             <img
@@ -202,7 +227,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 marginRight: '8px',
               }}
             />
-            <Typography variant="h6" noWrap component="div">
+            <Typography variant="h6" noWrap component="div" sx={{ color: (theme) => theme.palette.primary.contrastText }}>
               ZeitWerk
             </Typography>
           </Box>
@@ -212,9 +237,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           {/* Organisationsauswahl */}
           <FormControl variant="outlined" size="small" sx={{ minWidth: 200, mr: 2 }}>
             <InputLabel sx={{ 
-              color: isDarkMode ? '#E6E1E5' : 'rgba(15, 23, 42, 0.87)',
+              color: (theme) => theme.palette.primary.contrastText,
               '&.Mui-focused': {
-                color: isDarkMode ? '#D0BCFF' : '#6750A4'
+                color: (theme) => theme.palette.primary.contrastText
               }
             }}>
               Organisation
@@ -224,19 +249,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               onChange={(e) => handleOrganizationChange(e.target.value as string)}
               label="Organisation"
               sx={{ 
-                color: isDarkMode ? '#E6E1E5' : 'rgba(15, 23, 42, 0.87)',
-                '& .MuiOutlinedInput-notchedOutline': { 
-                  borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.23)' : 'rgba(15, 23, 42, 0.23)' 
-                },
-                '&:hover .MuiOutlinedInput-notchedOutline': { 
-                  borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.4)' : 'rgba(103, 80, 164, 0.4)' 
-                },
-                '&.Mui-focused .MuiOutlinedInput-notchedOutline': { 
-                  borderColor: isDarkMode ? '#D0BCFF' : '#6750A4' 
-                },
-                '& .MuiSvgIcon-root': { 
-                  color: isDarkMode ? '#E6E1E5' : 'rgba(15, 23, 42, 0.87)' 
-                }
+                color: (theme) => theme.palette.primary.contrastText,
+                '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.35)' },
+                '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.6)' },
+                '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.8)' },
+                '& .MuiSvgIcon-root': { color: (theme) => theme.palette.primary.contrastText }
               }}
             >
               {organizations.map((org: any) => (
@@ -254,10 +271,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               onClick={showTutorial}
               sx={{ 
                 mr: 1,
-                color: isDarkMode ? '#E6E1E5' : 'rgba(15, 23, 42, 0.87)',
-                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.04)',
+                color: (theme) => theme.palette.primary.contrastText,
+                backgroundColor: 'rgba(255,255,255,0.15)',
                 '&:hover': {
-                  backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)',
+                  backgroundColor: 'rgba(255,255,255,0.25)',
                 }
               }}
             >
@@ -272,10 +289,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               onClick={toggleMode}
               sx={{ 
                 mr: 1,
-                color: isDarkMode ? '#E6E1E5' : 'rgba(15, 23, 42, 0.87)',
-                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.04)',
+                color: (theme) => theme.palette.primary.contrastText,
+                backgroundColor: 'rgba(255,255,255,0.15)',
                 '&:hover': {
-                  backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)',
+                  backgroundColor: 'rgba(255,255,255,0.25)',
                 }
               }}
             >
@@ -287,10 +304,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             color="inherit" 
             onClick={handleLogout}
             sx={{
-              color: isDarkMode ? '#E6E1E5' : 'rgba(15, 23, 42, 0.87)',
-              backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.04)',
+              color: (theme) => theme.palette.primary.contrastText,
+              backgroundColor: 'rgba(255,255,255,0.15)',
               '&:hover': {
-                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)',
+                backgroundColor: 'rgba(255,255,255,0.25)',
               },
               borderRadius: 1,
               px: 2
@@ -388,7 +405,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     >
                       <ListItemIcon sx={{ 
                         minWidth: isCollapsed ? 'auto' : 56,
-                        justifyContent: 'center' 
+                        justifyContent: 'center',
+                        color: getClusterColor(item.id) || 'inherit'
                       }}>
                         {item.icon}
                       </ListItemIcon>
@@ -419,7 +437,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                             onClick={() => navigate(subItem.path)}
                             sx={{ pl: 4 }}
                           >
-                            <ListItemIcon sx={{ minWidth: 40 }}>
+                            <ListItemIcon sx={{ 
+                              minWidth: 40,
+                              color: getClusterColor(subItem.id) || getClusterColor(item.id) || 'inherit'
+                            }}>
                               {subItem.icon}
                             </ListItemIcon>
                             <ListItemText primary={subItem.text} />
@@ -455,7 +476,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                       >
                         <ListItemIcon sx={{ 
                           minWidth: isCollapsed ? 'auto' : 56,
-                          justifyContent: 'center' 
+                          justifyContent: 'center',
+                          color: getClusterColor(item.id) || 'inherit'
                         }}>
                           {item.icon}
                         </ListItemIcon>

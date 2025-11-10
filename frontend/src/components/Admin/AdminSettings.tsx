@@ -44,7 +44,8 @@ import {
   AppSettings, 
   VacationPeriod, 
   BreakTimeRule, 
-  defaultSettings
+  defaultSettings,
+  germanStates
 } from '../../types/settings';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
@@ -86,6 +87,12 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
     startDate: format(new Date(), 'yyyy-MM-dd'), // Standardwert: heute
     endDate: format(new Date(), 'yyyy-MM-dd')    // Standardwert: heute
   });
+  const [vacationErrors, setVacationErrors] = useState<{
+    name?: string;
+    startDate?: string;
+    endDate?: string;
+    range?: string;
+  }>({});
   const [newBreakRule, setNewBreakRule] = useState<Partial<BreakTimeRule>>({});
   const [restartRequired, setRestartRequired] = useState(false);
 
@@ -118,55 +125,61 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
     }
   };
 
+  // Schichtplanung-Tab wurde entfernt. Falls noch intern referenziert, noop-Renderer.
+  const renderShiftSettings = () => <></>;
+
   const handleResetSettings = () => {
     updateSettings(defaultSettings);
     onSettingsChange?.(defaultSettings);
   };
 
   const addVacationPeriod = () => {
-    // Validierung der Eingaben
-    if (!newVacation.name || !newVacation.name.trim()) {
-      alert('Bitte geben Sie einen Namen ein.');
-      return;
+  const errors: typeof vacationErrors = {};
+  const trimmedName = newVacation.name?.trim() ?? '';
+
+    if (!trimmedName) {
+      errors.name = 'Bitte geben Sie einen Namen ein.';
     }
 
     if (!newVacation.startDate) {
-      alert('Bitte wählen Sie ein Startdatum.');
-      return;
+      errors.startDate = 'Bitte wählen Sie ein Startdatum.';
     }
 
     if (!newVacation.endDate) {
-      alert('Bitte wählen Sie ein Enddatum.');
+      errors.endDate = 'Bitte wählen Sie ein Enddatum.';
+    }
+
+    const startDate = newVacation.startDate ? new Date(newVacation.startDate) : undefined;
+    const endDate = newVacation.endDate ? new Date(newVacation.endDate) : undefined;
+
+    if (startDate && isNaN(startDate.getTime())) {
+      errors.startDate = 'Ungültiges Startdatum. Bitte korrigieren Sie die Eingabe.';
+    }
+
+    if (endDate && isNaN(endDate.getTime())) {
+      errors.endDate = 'Ungültiges Enddatum. Bitte korrigieren Sie die Eingabe.';
+    }
+
+    if (startDate && endDate && startDate > endDate) {
+      errors.range = 'Das Startdatum muss vor dem Enddatum liegen.';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setVacationErrors(errors);
       return;
     }
 
-    // Datum-Validierung
-    const startDate = new Date(newVacation.startDate);
-    const endDate = new Date(newVacation.endDate);
-
-    if (isNaN(startDate.getTime())) {
-      alert('Ungültiges Startdatum. Bitte korrigieren Sie die Eingabe.');
-      return;
-    }
-
-    if (isNaN(endDate.getTime())) {
-      alert('Ungültiges Enddatum. Bitte korrigieren Sie die Eingabe.');
-      return;
-    }
-
-    if (startDate > endDate) {
-      alert('Das Startdatum muss vor dem Enddatum liegen.');
-      return;
-    }
+    setVacationErrors({});
 
     try {
       const vacation: VacationPeriod = {
         id: Date.now().toString(),
-        name: newVacation.name.trim(),
-        startDate: format(startDate, 'yyyy-MM-dd'),
-        endDate: format(endDate, 'yyyy-MM-dd'),
+  name: trimmedName,
+        startDate: format(startDate!, 'yyyy-MM-dd'),
+        endDate: format(endDate!, 'yyyy-MM-dd'),
         description: newVacation.description?.trim() || '',
-        affectsScheduling: newVacation.affectsScheduling || true,
+  // Respect the switch: default to true only if undefined, else use provided boolean
+  affectsScheduling: newVacation.affectsScheduling === undefined ? true : !!newVacation.affectsScheduling,
         organizationId: newVacation.organizationId || undefined
       };
       
@@ -261,6 +274,44 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
             </FormControl>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
               Bestimmt wie viele Tage in der Wochenansicht angezeigt werden.
+            </Typography>
+          </CardContent>
+        </Card>
+      </Grid>
+
+      {/* Feiertag-Region */}
+      <Grid item xs={12} md={6}>
+        <Card>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Feiertag-Konfiguration
+            </Typography>
+            <FormControl fullWidth margin="normal">
+              <InputLabel>Bundesland für Feiertage</InputLabel>
+              <Select
+                value={settings.calendar.holidayRegion}
+                label="Bundesland für Feiertage"
+                onChange={(e) => {
+                  const newSettings = {
+                    ...settings,
+                    calendar: {
+                      ...settings.calendar,
+                      holidayRegion: e.target.value as string
+                    }
+                  };
+                  updateSettings(newSettings);
+                }}
+              >
+                {germanStates.map((state) => (
+                  <MenuItem key={state.value} value={state.value}>
+                    {state.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Bestimmt welche Feiertage im Kalender angezeigt werden. 
+              Bereits geladene Feiertage anderer Bundesländer bleiben gespeichert.
             </Typography>
           </CardContent>
         </Card>
@@ -464,101 +515,7 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
     </Grid>
   );
 
-  const renderShiftSettings = () => (
-    <Grid container spacing={3}>
-      <Grid item xs={12}>
-        <Card>
-          <CardContent>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">
-                Pausenzeiten Konfiguration - nicht implementiert
-              </Typography>
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => setBreakDialog(true)}
-              >
-                Neue Regel
-              </Button>
-            </Box>
-            
-            <Alert severity="info" sx={{ mb: 2 }}>
-              <Typography variant="body2">
-                <strong>Wie werden Pausenzeiten genutzt?</strong><br/>
-                • <strong>Automatische Berechnung:</strong> Pausen werden basierend auf Arbeitszeit automatisch abgezogen<br/>
-                • <strong>Schichtplanung:</strong> Bei der Planung werden Pausen berücksichtigt (Nettoarbeitszeit)<br/>
-                • <strong>Lohnberechnung:</strong> Unbezahlte Pausen werden von der Arbeitszeit abgezogen<br/>
-                • <strong>Compliance:</strong> Einhaltung gesetzlicher Pausenregelungen
-              </Typography>
-            </Alert>
-
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={settings.shifts.automaticBreakCalculation}
-                  onChange={(e) => handleSettingChange('shifts', 'automaticBreakCalculation', e.target.checked)}
-                />
-              }
-              label="Automatische Pausenberechnung aktivieren"
-              sx={{ mb: 2 }}
-            />
-
-            <TextField
-              label="Standard Pausendauer (Minuten)"
-              type="number"
-              value={settings.shifts.defaultBreakDuration}
-              onChange={(e) => handleSettingChange('shifts', 'defaultBreakDuration', parseInt(e.target.value))}
-              fullWidth
-              margin="normal"
-              InputProps={{ inputProps: { min: 0, max: 120 } }}
-            />
-
-            <Typography variant="subtitle1" sx={{ mt: 3, mb: 1 }}>
-              Pausenregeln
-            </Typography>
-            
-            <Grid container spacing={2}>
-              {settings.shifts.breakTimes.map(rule => (
-                <Grid item xs={12} md={6} key={rule.id}>
-                  <Paper sx={{ p: 2 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <Box sx={{ flex: 1 }}>
-                        <Typography variant="subtitle1" fontWeight="bold">
-                          {rule.name}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Ab {rule.minWorkHours}h Arbeit → {rule.breakDuration} Min Pause
-                        </Typography>
-                        <Box sx={{ mt: 1 }}>
-                          <Chip 
-                            label={rule.isPaid ? "Bezahlt" : "Unbezahlt"} 
-                            size="small" 
-                            color={rule.isPaid ? "success" : "default"}
-                            sx={{ mr: 1 }}
-                          />
-                          <Chip 
-                            label={rule.isAutomatic ? "Automatisch" : "Manuell"} 
-                            size="small" 
-                            color={rule.isAutomatic ? "info" : "default"}
-                          />
-                        </Box>
-                      </Box>
-                      <IconButton 
-                        size="small"
-                        onClick={() => removeItem('shifts', 'breakTimes', rule.id)}
-                      >
-                        <DeleteIcon />
-                      </IconButton>
-                    </Box>
-                  </Paper>
-                </Grid>
-              ))}
-            </Grid>
-          </CardContent>
-        </Card>
-      </Grid>
-    </Grid>
-  );
+  // Ehemaliger Inhalt von Schichtplanung entfernt.
 
   const renderUISettings = () => (
     <Grid container spacing={3}>
@@ -590,6 +547,22 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
             <Typography variant="h6" gutterBottom>
               Leistung & Grafik
             </Typography>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={(settings.ui.menuIconColor || 'monochrome') === 'themed'}
+                  onChange={(e) => {
+                    const value = e.target.checked ? 'themed' : 'monochrome';
+                    handleSettingChange('ui', 'menuIconColor', value);
+                  }}
+                />
+              }
+              label="Menü-Icons in Themenfarben einfärben"
+            />
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Schaltet zwischen monochromen Icons und farbigen Icons basierend auf dem aktuellen Theme um.
+            </Typography>
+            <Divider sx={{ my: 2 }} />
             <FormControlLabel
               control={
                 <Switch
@@ -752,21 +725,21 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
             sx={{ borderBottom: 1, borderColor: 'divider' }}
           >
             <Tab icon={<CalendarIcon />} label="Wochen- & Urlaubsplanung" />
-            <Tab icon={<ScheduleIcon />} label="Schichtplanung" />
+            {/* Schichtplanung entfernt (TVöD-konforme Pausenberechnung ist fix) */}
             <Tab icon={<SettingsIcon />} label="App-Einstellungen" />
             <Tab icon={<PersonIcon />} label="Admin-Einstellungen" />
           </Tabs>
 
           <Box sx={{ p: 3 }}>
             {activeTab === 0 && renderCalendarSettings()}
-            {activeTab === 1 && renderShiftSettings()}
-            {activeTab === 2 && (
+            {/* Indexe angepasst: ehemals 2 -> 1, ehemals 3 -> 2 */}
+            {activeTab === 1 && (
               <Box>
                 {renderUISettings()}
                 {renderUiThemeSettings()}
               </Box>
             )}
-            {activeTab === 3 && renderAdminSettings()}
+            {activeTab === 2 && renderAdminSettings()}
           </Box>
         </Paper>
 
@@ -808,7 +781,12 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
               fullWidth
               variant="outlined"
               value={newVacation.name || ''}
-              onChange={(e) => setNewVacation(prev => ({ ...prev, name: e.target.value }))}
+              onChange={(e) => {
+                setVacationErrors(prev => ({ ...prev, name: undefined }));
+                setNewVacation(prev => ({ ...prev, name: e.target.value }));
+              }}
+              error={Boolean(vacationErrors.name)}
+              helperText={vacationErrors.name}
             />
             <DatePicker
               label="Startdatum"
@@ -822,6 +800,7 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
               })() : null}
               onChange={(date) => {
                 try {
+                  setVacationErrors(prev => ({ ...prev, startDate: undefined, range: undefined }));
                   setNewVacation(prev => ({ 
                     ...prev, 
                     startDate: date ? format(date, 'yyyy-MM-dd') : undefined 
@@ -834,8 +813,8 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
                 textField: { 
                   fullWidth: true, 
                   margin: 'dense',
-                  error: false,
-                  helperText: newVacation.startDate && isNaN(new Date(newVacation.startDate).getTime()) ? 'Ungültiges Datum' : ''
+                  error: Boolean(vacationErrors.startDate),
+                  helperText: vacationErrors.startDate
                 } 
               }}
             />
@@ -851,6 +830,7 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
               })() : null}
               onChange={(date) => {
                 try {
+                  setVacationErrors(prev => ({ ...prev, endDate: undefined, range: undefined }));
                   setNewVacation(prev => ({ 
                     ...prev, 
                     endDate: date ? format(date, 'yyyy-MM-dd') : undefined 
@@ -863,11 +843,16 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
                 textField: { 
                   fullWidth: true, 
                   margin: 'dense',
-                  error: false,
-                  helperText: newVacation.endDate && isNaN(new Date(newVacation.endDate).getTime()) ? 'Ungültiges Datum' : ''
+                  error: Boolean(vacationErrors.endDate),
+                  helperText: vacationErrors.endDate
                 } 
               }}
             />
+            {vacationErrors.range && (
+              <Alert severity="error" sx={{ mt: 2 }}>
+                {vacationErrors.range}
+              </Alert>
+            )}
             <FormControl fullWidth margin="dense">
               <InputLabel>Organisation (optional)</InputLabel>
               <Select

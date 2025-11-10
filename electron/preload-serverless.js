@@ -48,6 +48,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // DB utilities
   getDatabaseStats: () => ipcRenderer.invoke('db:stats'),
+  getShiftYears: () => ipcRenderer.invoke('db:getShiftYears'),
+  purgeShiftsByYear: (year) => ipcRenderer.invoke('db:purgeShiftsByYear', year),
   createBackup: () => ipcRenderer.invoke('db:backup'),
   importBackup: () => ipcRenderer.invoke('db:importBackup'),
   importBackupFromData: (data) => ipcRenderer.invoke('db:importBackupFromData', data),
@@ -55,10 +57,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Holidays (serverless basic)
   getHolidays: (filters) => ipcRenderer.invoke('holidays:get', filters || {}),
+  loadHolidaysFromAPI: (state, fromYear, toYear) => ipcRenderer.invoke('holidays:loadFromAPI', state, fromYear, toYear),
+  getHolidayCacheInfo: (state) => ipcRenderer.invoke('holidays:getCacheInfo', state),
+  clearHolidayCache: (state, year) => ipcRenderer.invoke('holidays:clearCache', state, year),
 
   // File dialogs and writing
   saveFile: (options) => ipcRenderer.invoke('dialog:saveFile', options || {}),
   writeFile: (filePath, content, options) => ipcRenderer.invoke('fs:writeFile', filePath, content, options || {}),
+  // Export folder helpers
+  getExportFolder: () => ipcRenderer.invoke('exportFolder:get'),
+  setExportFolder: (path) => ipcRenderer.invoke('exportFolder:set', path),
+  clearExportFolder: () => ipcRenderer.invoke('exportFolder:clear'),
+  writeExportFile: (fileName, content, options) => ipcRenderer.invoke('fs:writeExportFile', fileName, content, options || {}),
 
   // Photos (employee avatars)
   importEmployeePhoto: () => ipcRenderer.invoke('photos:import'),

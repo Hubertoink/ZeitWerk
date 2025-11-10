@@ -36,6 +36,8 @@ import { fetchOrganizations } from './store/slices/organizationSlice';
 import { fetchEmployees } from './store/slices/employeeSlice';
 import { useSettings } from './contexts/SettingsContext';
 import { TutorialProvider, useTutorial } from './contexts/TutorialContext';
+import { repairCopiedShiftsInconsistencies } from './utils/migrations';
+import { fetchShifts } from './store/slices/shiftSlice';
 import Tutorial from './components/Tutorial/Tutorial';
 
 const AppContent: React.FC = () => {
@@ -77,6 +79,28 @@ const AppContent: React.FC = () => {
       dispatch(fetchOrganizations());  
       dispatch(fetchEmployees());
     }
+  }, [isAuthenticated, dispatch]);
+
+  // One-time migration to fix previously copied shifts with wrong organizationId
+  React.useEffect(() => {
+    if (!isAuthenticated) return;
+    const key = 'zw_mig_fix_org_2025_10';
+    try {
+      if (localStorage.getItem(key)) return;
+    } catch {}
+    (async () => {
+      try {
+        const res = await repairCopiedShiftsInconsistencies();
+        if (res.fixed > 0) {
+          // Refresh shifts so MonthView/exports reflect repaired data
+          dispatch(fetchShifts({}));
+        }
+      } catch (e) {
+        // non-fatal
+      } finally {
+        try { localStorage.setItem(key, '1'); } catch {}
+      }
+    })();
   }, [isAuthenticated, dispatch]);
 
   const handleLogin = () => {

@@ -70,6 +70,11 @@ const DatabasePathManager: React.FC = () => {
     message: string;
     severity: 'success' | 'error' | 'warning' | 'info';
   }>({ open: false, message: '', severity: 'info' });
+  // Excel export folder state
+  const [exportFolder, setExportFolder] = useState<string | null>(null);
+  // Cleanup old shifts
+  const [shiftYears, setShiftYears] = useState<Array<{ year: number; count: number }>>([]);
+  const [selectedYear, setSelectedYear] = useState<number | ''>('');
 
   // Load database path information
   const loadPathInfo = async () => {
@@ -88,6 +93,26 @@ const DatabasePathManager: React.FC = () => {
 
   useEffect(() => {
     loadPathInfo();
+    // Load export folder from app settings via preload
+    (async () => {
+      try {
+        const api: any = (window as any).electronAPI;
+        if (api?.getExportFolder) {
+          const path = await api.getExportFolder();
+          setExportFolder(typeof path === 'string' ? path : null);
+        }
+        if (api?.getShiftYears) {
+          const years = await api.getShiftYears();
+          setShiftYears(Array.isArray(years) ? years : []);
+          // Preselect previous year if present
+          const current = new Date().getFullYear();
+          const prev = current - 1;
+          if (years?.some?.((y:any)=>y.year===prev)) setSelectedYear(prev);
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
   }, []);
 
   const showSnackbar = (message: string, severity: 'success' | 'error' | 'warning' | 'info') => {
@@ -240,6 +265,72 @@ const DatabasePathManager: React.FC = () => {
 
           {pathInfo && (
             <Grid container spacing={3}>
+              {/* Export folder selection */}
+              <Grid item xs={12}>
+                <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'grey.50', border: '1px dashed', borderColor: 'grey.300' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                    <SettingsIcon />
+                    <Typography variant="subtitle1" fontWeight="bold">
+                      Fester Speicherort für Excel-Exporte
+                    </Typography>
+                  </Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    Wenn gesetzt, werden Excel-Exporte automatisch in diesem Ordner gespeichert, ohne Nachfragen.
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <TextField
+                      fullWidth
+                      label="Export-Ordner"
+                      value={exportFolder || ''}
+                      InputProps={{ readOnly: true }}
+                    />
+                    <Button
+                      variant="contained"
+                      startIcon={<FolderOpenIcon />}
+                      onClick={async () => {
+                        try {
+                          const api: any = (window as any).electronAPI;
+                          const result = await api.showDirectoryDialog();
+                          if (!result?.canceled && result?.path) {
+                            const setRes = await api.setExportFolder(result.path);
+                            if (setRes?.success) {
+                              setExportFolder(result.path);
+                              showSnackbar(`Export-Ordner gesetzt: ${result.path}`, 'success');
+                            } else {
+                              showSnackbar(setRes?.error || 'Export-Ordner konnte nicht gespeichert werden', 'error');
+                            }
+                          }
+                        } catch (e: any) {
+                          showSnackbar(e?.message || 'Fehler beim Setzen des Export-Ordners', 'error');
+                        }
+                      }}
+                      sx={{ whiteSpace: 'nowrap' }}
+                    >
+                      Ordner wählen
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      color="warning"
+                      onClick={async () => {
+                        try {
+                          const api: any = (window as any).electronAPI;
+                          const res = await api.clearExportFolder?.();
+                          if (res?.success || res === undefined) {
+                            setExportFolder(null);
+                            showSnackbar('Export-Ordner entfernt. Es wird wieder nach einem Speicherort gefragt.', 'info');
+                          } else {
+                            showSnackbar(res?.error || 'Fehler beim Entfernen des Export-Ordners', 'error');
+                          }
+                        } catch (e: any) {
+                          showSnackbar(e?.message || 'Fehler beim Entfernen des Export-Ordners', 'error');
+                        }
+                      }}
+                    >
+                      Entfernen
+                    </Button>
+                  </Box>
+                </Box>
+              </Grid>
               {/* Current Path */}
               <Grid item xs={12}>
                 <Box sx={{ 
@@ -375,6 +466,72 @@ const DatabasePathManager: React.FC = () => {
                     <Chip label={`${pathInfo.stats.shiftTypes} Schichttypen`} size="small" />
                     <Chip label={`${pathInfo.stats.organizations} Organisationen`} size="small" />
                     <Chip label={pathInfo.stats.fileSize} size="small" color="primary" />
+                  </Box>
+                </Box>
+              </Grid>
+
+              {/* Cleanup old shifts by year */}
+              <Grid item xs={12}>
+                <Box sx={{ p: 2, borderRadius: 2, bgcolor: 'grey.50', border: '1px solid', borderColor: 'grey.200' }}>
+                  <Typography variant="subtitle2" fontWeight="bold" sx={{ mb: 1 }}>
+                    Alte Schichten löschen
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    Entfernt alle Schichten eines ausgewählten Jahres, z. B. im Jahr 2026 die Schichten von 2025.
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <TextField
+                      select
+                      label="Jahr auswählen"
+                      value={selectedYear}
+                      onChange={(e:any)=>setSelectedYear(e.target.value ? parseInt(e.target.value,10) : '')}
+                      SelectProps={{ native: true }}
+                      sx={{ minWidth: 160 }}
+                    >
+                      <option value=""></option>
+                      {shiftYears.map(y => (
+                        <option key={y.year} value={y.year}>{y.year} ({y.count})</option>
+                      ))}
+                    </TextField>
+                    <Button
+                      variant="contained"
+                      color="error"
+                      disabled={!selectedYear || loading}
+                      onClick={async()=>{
+                        try {
+                          const api: any = (window as any).electronAPI;
+                          if (!selectedYear) return;
+                          let proceed = false;
+                          if (typeof (window as any).electronAPI.showConfirmationDialog === 'function') {
+                            const res = await (window as any).electronAPI.showConfirmationDialog(
+                              'Alte Schichten löschen',
+                              `Sollen wirklich alle Schichten aus dem Jahr ${selectedYear} gelöscht werden?`
+                            );
+                            proceed = (res && res.response === 1); // 1 = bestätigen
+                          } else {
+                            proceed = window.confirm(`Sollen wirklich alle Schichten aus dem Jahr ${selectedYear} gelöscht werden?`);
+                          }
+                          if (!proceed) return; // Abbrechen
+                          setLoading(true);
+                          const res = await api.purgeShiftsByYear(selectedYear as number);
+                          if (res?.success) {
+                            showSnackbar(`${res.deleted} Schichten aus ${selectedYear} gelöscht`, 'success');
+                            // Refresh stats and years
+                            await loadPathInfo();
+                            const years = await api.getShiftYears();
+                            setShiftYears(Array.isArray(years) ? years : []);
+                          } else {
+                            showSnackbar('Löschen fehlgeschlagen', 'error');
+                          }
+                        } catch (e:any) {
+                          showSnackbar(e?.message || 'Fehler beim Löschen', 'error');
+                        } finally {
+                          setLoading(false);
+                        }
+                      }}
+                    >
+                      Schichten löschen
+                    </Button>
                   </Box>
                 </Box>
               </Grid>

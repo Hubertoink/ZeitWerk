@@ -30,10 +30,10 @@ import {
   ContentCopy as CopyIcon
 } from '@mui/icons-material';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { setCurrentDate, navigateWeek } from '../../store/slices/calendarSlice';
+import { setWeekDate, navigateWeek } from '../../store/slices/calendarSlice';
 import { fetchEmployees } from '../../store/slices/employeeSlice';
 import { fetchShiftTypes } from '../../store/slices/shiftTypeSlice';
-import { fetchShifts, createShift, updateShift, deleteShift, moveShift } from '../../store/slices/shiftSlice';
+import { fetchShifts, createShift, updateShift, deleteShift } from '../../store/slices/shiftSlice';
 import { format, startOfWeek, addDays, isSameDay, isToday } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { useSettings } from '../../contexts/SettingsContext';
@@ -52,7 +52,7 @@ const WeekView: React.FC = () => {
   const { selectedOrganization } = useAppSelector((state: any) => state.organizations);
   const shiftsState = useAppSelector((state: any) => state.shifts);
   
-  const currentDate = calendar?.currentDate ? new Date(calendar.currentDate) : new Date();
+  const currentDate = calendar?.weekDate ? new Date(calendar.weekDate) : new Date();
   const shifts = shiftsState?.shifts || [];
 
   const [weekDays, setWeekDays] = useState<Date[]>([]);
@@ -306,7 +306,7 @@ const WeekView: React.FC = () => {
   };
 
   const handleToday = () => {
-    dispatch(setCurrentDate(new Date().toISOString()));
+  dispatch(setWeekDate(new Date().toISOString()));
   };
 
   // Memoized shifts calculation for the entire week
@@ -1063,7 +1063,13 @@ console.log('Wochenduplizierung - Filter-Debug:', {
                           }
 
                           // Kein Konflikt: verschiebe direkt
-                          dispatch(moveShift({ id: parseInt(draggedShift.id), employeeId: employee.id, date: format(day, 'yyyy-MM-dd') }))
+                          dispatch(updateShift({
+                            id: parseInt(draggedShift.id),
+                            data: {
+                              employeeId: employee.id.toString(),
+                              date: format(day, 'yyyy-MM-dd')
+                            }
+                          }))
                             .unwrap()
                             .then(() => {
                               dispatch(fetchShifts({}));

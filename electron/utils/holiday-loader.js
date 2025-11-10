@@ -142,11 +142,17 @@ function getBasicGermanHolidays(year) {
 
   // Osterfeiertage berechnen
   const easter = calculateEasterDate(year);
-  const easterString = easter.toISOString().split('T')[0];
+  const fmt = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+  const easterString = fmt(easter);
   
   holidays.push(
     { 
-      date: addDays(easter, -2).toISOString().split('T')[0], 
+      date: fmt(addDays(easter, -2)), 
       name: 'Karfreitag', 
       type: 'public' 
     },
@@ -156,17 +162,17 @@ function getBasicGermanHolidays(year) {
       type: 'public' 
     },
     { 
-      date: addDays(easter, 1).toISOString().split('T')[0], 
+      date: fmt(addDays(easter, 1)), 
       name: 'Ostermontag', 
       type: 'public' 
     },
     { 
-      date: addDays(easter, 39).toISOString().split('T')[0], 
+      date: fmt(addDays(easter, 39)), 
       name: 'Christi Himmelfahrt', 
       type: 'public' 
     },
     { 
-      date: addDays(easter, 50).toISOString().split('T')[0], 
+      date: fmt(addDays(easter, 50)), 
       name: 'Pfingstmontag', 
       type: 'public' 
     }

@@ -1,6 +1,6 @@
 {
   "name": "dienstplan-frontend",
-  "version": "1.3.4",
+  "version": "1.4.10",
   "private": true,
   "dependencies": {
     "@emotion/react": "^11.11.1",

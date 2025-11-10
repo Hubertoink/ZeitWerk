@@ -14,10 +14,11 @@ export interface Holiday {
 
 // Deutsche Feiertage für den aktuellen Datumsbereich laden
 export const loadHolidaysForRange = async (startDate: Date, endDate: Date, state?: string): Promise<Holiday[]> => {
+  const normalizedState = state ? state.toUpperCase() : undefined;
   try {
-    const cacheKey = `${format(startDate, 'yyyy-MM-dd')}:${format(endDate, 'yyyy-MM-dd')}:${state || 'ALL'}`;
-    const cached = holidayCache.get(cacheKey);
-    if (cached) return cached;
+    const cacheKey = `${format(startDate, 'yyyy-MM-dd')}:${format(endDate, 'yyyy-MM-dd')}:${normalizedState || 'ALL'}`;
+  const cached = holidayCache.get(cacheKey);
+  if (cached) return cached;
 
     // Versuche zuerst aus der lokalen Database zu laden
     // Prefer Electron IPC if present to avoid network and reduce warnings
@@ -25,23 +26,54 @@ export const loadHolidaysForRange = async (startDate: Date, endDate: Date, state
       ? await (window as any).electronAPI.getHolidays({
           startDate: format(startDate, 'yyyy-MM-dd'),
           endDate: format(endDate, 'yyyy-MM-dd'),
-          state: state
+          state: normalizedState
         })
       : await apiService.getHolidays({
       startDate: format(startDate, 'yyyy-MM-dd'),
       endDate: format(endDate, 'yyyy-MM-dd'),
-      state: state
+      state: normalizedState
         });
 
     if (holidays && holidays.length > 0) {
-      const result = holidays.map((h: any) => ({
+      // Normalize from DB/API
+      const normalized = holidays.map((h: any) => ({
         date: h.date,
         name: h.name,
-        type: h.type || 'public',
+        type: (h.type as any) || 'public',
         state: h.state
-      }));
-      holidayCache.set(cacheKey, result);
-      return result;
+      } as Holiday));
+
+      // Merge with local basic holidays to ensure consistency (e.g., Heiligabend/Silvester)
+      const startYear = startDate.getFullYear();
+      const endYear = endDate.getFullYear();
+      let extras: Holiday[] = [];
+      for (let y = startYear; y <= endYear; y++) {
+        extras = extras.concat(getBasicGermanHolidays(y));
+      }
+      // Filter extras to range
+      extras = extras.filter(e => {
+        const d = new Date(e.date);
+        return d >= startDate && d <= endDate;
+  }).map(e => ({ ...e, state: e.state || undefined }));
+
+      // If DB/API already provides a holiday with same name in range, do NOT add basic extras for that name
+  const presentNames = new Set(normalized.map((h: Holiday) => h.name));
+      // Also, prioritize only fixed-date extras to avoid movable-feast drift
+      const isFixedDate = (h: Holiday) => /-(01-01|05-01|10-03|12-24|12-25|12-26|12-31)$/.test(h.date);
+      extras = extras.filter(e => !presentNames.has(e.name) || isFixedDate(e));
+
+      // Deduplicate by date+name+state so regional and nationwide variants can coexist
+      const byKey = new Map<string, Holiday>();
+      const put = (h: Holiday) => {
+        const key = `${h.date}::${h.name}::${h.state || 'NATIONAL'}`;
+        if (!byKey.has(key)) byKey.set(key, h);
+      };
+      normalized.forEach(put);
+      extras.forEach(put);
+      const merged = Array.from(byKey.values()).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      holidayCache.set(cacheKey, merged);
+      return merged;
     }
 
     // Fallback: Wenn keine Daten in der DB, verwende lokale Berechnung
@@ -82,9 +114,33 @@ export const loadHolidaysForRange = async (startDate: Date, endDate: Date, state
       const holidayDate = new Date(holiday.date);
       return holidayDate >= startDate && holidayDate <= endDate;
     });
-    const cacheKey = `${format(startDate, 'yyyy-MM-dd')}:${format(endDate, 'yyyy-MM-dd')}:${state || 'ALL'}`;
+    const cacheKey = `${format(startDate, 'yyyy-MM-dd')}:${format(endDate, 'yyyy-MM-dd')}:${normalizedState || 'ALL'}`;
     holidayCache.set(cacheKey, result);
     return result;
+  }
+};
+
+export const invalidateHolidayCache = (state?: string, range?: { startDate?: string; endDate?: string }) => {
+  if (state && state.toUpperCase() !== 'ALL') {
+    const upperState = state.toUpperCase();
+    const keysToDelete: string[] = [];
+    holidayCache.forEach((_value, key) => {
+      if (key.endsWith(`:${upperState}`)) {
+        keysToDelete.push(key);
+      }
+    });
+    keysToDelete.forEach((key) => holidayCache.delete(key));
+  } else {
+    holidayCache.clear();
+  }
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('holidays:cache-invalidated', {
+      detail: {
+        state: state ? state.toUpperCase() : 'ALL',
+        range
+      }
+    }));
   }
 };
 
@@ -102,35 +158,41 @@ export const getBasicGermanHolidays = (year: number): Holiday[] => {
 
   // Osterfeiertage berechnen (vereinfacht)
   const easter = getEasterDate(year);
+  const fmt = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
   
   holidays.push(
     { 
-      date: format(new Date(easter.getTime() - 2 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'), 
+      date: fmt(new Date(easter.getTime() - 2 * 24 * 60 * 60 * 1000)), 
       name: 'Karfreitag', 
       type: 'public' 
     },
     { 
-      date: format(easter, 'yyyy-MM-dd'), 
+      date: fmt(easter), 
       name: 'Ostersonntag', 
       type: 'public' 
     },
     { 
-      date: format(new Date(easter.getTime() + 1 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'), 
+      date: fmt(new Date(easter.getTime() + 1 * 24 * 60 * 60 * 1000)), 
       name: 'Ostermontag', 
       type: 'public' 
     },
     { 
-      date: format(new Date(easter.getTime() + 39 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'), 
+      date: fmt(new Date(easter.getTime() + 39 * 24 * 60 * 60 * 1000)), 
       name: 'Christi Himmelfahrt', 
       type: 'public' 
     },
     { 
-      date: format(new Date(easter.getTime() + 49 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'), 
+      date: fmt(new Date(easter.getTime() + 49 * 24 * 60 * 60 * 1000)), 
       name: 'Pfingstsonntag', 
       type: 'public' 
     },
     { 
-      date: format(new Date(easter.getTime() + 50 * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'), 
+      date: fmt(new Date(easter.getTime() + 50 * 24 * 60 * 60 * 1000)), 
       name: 'Pfingstmontag', 
       type: 'public' 
     }

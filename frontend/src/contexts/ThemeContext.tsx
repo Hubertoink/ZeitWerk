@@ -236,12 +236,14 @@ export const CustomThemeProvider: React.FC<{ children: React.ReactNode }> = ({ c
       },
       MuiAppBar: {
         styleOverrides: {
-          root: {
-            backgroundColor: mode === 'dark' ? '#1a1a1a' : '#FEFBFF',
-            borderBottom: mode === 'dark' 
-              ? '1px solid rgba(255, 255, 255, 0.12)' 
-              : '1px solid rgba(0, 0, 0, 0.12)',
-          },
+          root: ({ theme }) => ({
+            background: gradient(theme.palette.primary.main, theme.palette.primary.dark),
+            color: theme.palette.primary.contrastText,
+            borderBottom: 'none',
+            boxShadow: mode === 'dark'
+              ? '0 2px 10px rgba(0,0,0,0.5)'
+              : '0 2px 10px rgba(103,80,164,0.25)'
+          }),
         },
       },
       MuiDrawer: {

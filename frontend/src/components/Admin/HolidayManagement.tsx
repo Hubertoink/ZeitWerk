@@ -18,15 +18,25 @@ import {
   Grid,
   Card,
   CardContent,
-  LinearProgress
+  LinearProgress,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Stack
 } from '@mui/material';
 import {
   Download as DownloadIcon,
   Delete as DeleteIcon,
   Refresh as RefreshIcon,
-  CalendarMonth as CalendarIcon
+  CalendarMonth as CalendarIcon,
+  Visibility as VisibilityIcon
 } from '@mui/icons-material';
 import apiService from '../../services/api-service';
+import { invalidateHolidayCache } from '../../utils/holidays';
+import { useSettings } from '../../contexts/SettingsContext';
 
 // Deutsche Bundesländer
 const GERMAN_STATES: Record<string, string> = {
@@ -57,8 +67,17 @@ interface HolidayCacheInfo {
   total_holidays: number;
 }
 
+interface StoredHoliday {
+  id?: number;
+  date: string;
+  name: string;
+  state?: string | null;
+  type?: string;
+}
+
 const HolidayManagement: React.FC = () => {
-  const [selectedState, setSelectedState] = useState<string>('ALL');
+  const { settings, updateSettings } = useSettings();
+  const [selectedState, setSelectedState] = useState<string>(() => settings?.calendar?.holidayRegion || 'ALL');
   const [fromYear, setFromYear] = useState<number>(new Date().getFullYear());
   const [toYear, setToYear] = useState<number>(new Date().getFullYear() + 2);
   const [cacheInfo, setCacheInfo] = useState<HolidayCacheInfo[]>([]);
@@ -66,6 +85,9 @@ const HolidayManagement: React.FC = () => {
   const [loadingMessage, setLoadingMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [holidayPreview, setHolidayPreview] = useState<StoredHoliday[]>([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean;
     title: string;
@@ -77,6 +99,28 @@ const HolidayManagement: React.FC = () => {
     loadCacheInfo();
   }, []);
 
+  useEffect(() => {
+    const configuredState = settings?.calendar?.holidayRegion;
+    if (configuredState && configuredState !== selectedState) {
+      setSelectedState(configuredState);
+    }
+  }, [settings?.calendar?.holidayRegion, selectedState]);
+
+  const validateYearRange = () => {
+    if (fromYear > toYear) {
+      setError('Das Startjahr muss kleiner oder gleich dem Endjahr sein');
+      return false;
+    }
+
+    const yearCount = toYear - fromYear + 1;
+    if (yearCount > 5) {
+      setError('Maximal 5 Jahre können auf einmal geladen werden');
+      return false;
+    }
+
+    return true;
+  };
+
   const loadCacheInfo = async () => {
     try {
       const info = await apiService.getHolidayCacheInfo();
@@ -87,15 +131,45 @@ const HolidayManagement: React.FC = () => {
     }
   };
 
-  const handleLoadHolidays = async () => {
-    if (fromYear > toYear) {
-      setError('Das Startjahr muss kleiner oder gleich dem Endjahr sein');
+  const loadHolidayPreview = async (silent = false) => {
+    if (!silent && !validateYearRange()) {
       return;
     }
 
-    const yearCount = toYear - fromYear + 1;
-    if (yearCount > 5) {
-      setError('Maximal 5 Jahre können auf einmal geladen werden');
+    if (!silent) {
+      setPreviewError(null);
+    }
+
+    setPreviewLoading(true);
+
+    try {
+      const filters: { state?: string; startDate?: string; endDate?: string } = {
+        startDate: `${fromYear}-01-01`,
+        endDate: `${toYear}-12-31`
+      };
+
+      if (selectedState) {
+        filters.state = selectedState;
+      }
+
+      const holidays = await apiService.getHolidays(filters);
+      const normalized = Array.isArray(holidays) ? holidays : [];
+      setHolidayPreview(normalized);
+
+      if (!silent) {
+        setPreviewError(normalized.length === 0 ? 'Keine gespeicherten Feiertage für diesen Bereich gefunden.' : null);
+      }
+    } catch (error: any) {
+      const message = error?.message || 'Unbekannter Fehler beim Laden der gespeicherten Feiertage.';
+      setPreviewError(`❌ ${message}`);
+      setHolidayPreview([]);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleLoadHolidays = async () => {
+    if (!validateYearRange()) {
       return;
     }
 
@@ -109,7 +183,21 @@ const HolidayManagement: React.FC = () => {
       
       if (result.success) {
         setSuccess(`✅ ${result.count} Feiertage erfolgreich geladen für ${GERMAN_STATES[selectedState]} (${result.fromYear}-${result.toYear})`);
+        invalidateHolidayCache(selectedState, {
+          startDate: `${fromYear}-01-01`,
+          endDate: `${toYear}-12-31`
+        });
+        if (selectedState !== 'ALL' && settings.calendar.holidayRegion !== selectedState) {
+          updateSettings({
+            ...settings,
+            calendar: {
+              ...settings.calendar,
+              holidayRegion: selectedState
+            }
+          });
+        }
         await loadCacheInfo(); // Refresh cache info
+        await loadHolidayPreview(true);
       } else {
         setError(`❌ Fehler beim Laden: ${result.error}`);
       }
@@ -136,7 +224,9 @@ const HolidayManagement: React.FC = () => {
           const result = await apiService.clearHolidayCache(state);
           if (result.success) {
             setSuccess(`✅ ${result.deletedCount} Feiertage gelöscht`);
+            invalidateHolidayCache(state);
             await loadCacheInfo();
+            await loadHolidayPreview(true);
           }
         } catch (error: any) {
           setError(`❌ Fehler beim Löschen: ${error.message}`);
@@ -257,7 +347,7 @@ const HolidayManagement: React.FC = () => {
           📥 Neue Feiertage laden
         </Typography>
 
-        <Grid container spacing={3} alignItems="center">
+  <Grid container spacing={3} alignItems="center">
           <Grid item xs={12} md={4}>
             <FormControl fullWidth>
               <InputLabel>Bundesland</InputLabel>
@@ -319,16 +409,26 @@ const HolidayManagement: React.FC = () => {
           </Grid>
 
           <Grid item xs={12} md={4}>
-            <Button
-              variant="contained"
-              size="large"
-              startIcon={loading ? <CircularProgress size={20} /> : <DownloadIcon />}
-              onClick={handleLoadHolidays}
-              disabled={loading}
-              fullWidth
-            >
-              {loading ? 'Lade...' : 'Feiertage laden'}
-            </Button>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+              <Button
+                variant="contained"
+                startIcon={loading ? <CircularProgress size={20} /> : <DownloadIcon />}
+                onClick={handleLoadHolidays}
+                disabled={loading}
+                fullWidth
+              >
+                {loading ? 'Lade…' : 'Feiertage laden'}
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<VisibilityIcon />}
+                onClick={() => loadHolidayPreview()}
+                disabled={loading || previewLoading}
+                fullWidth
+              >
+                Geladene Feiertage anzeigen
+              </Button>
+            </Stack>
           </Grid>
         </Grid>
 
@@ -354,6 +454,74 @@ const HolidayManagement: React.FC = () => {
           {success}
         </Alert>
       )}
+
+      {/* Preview of stored holidays */}
+      <Paper sx={{ p: 2, mb: 3 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">
+            Gespeicherte Feiertage ({GERMAN_STATES[selectedState]})
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Zeitraum: {fromYear} – {toYear}
+          </Typography>
+        </Box>
+
+        {previewLoading && (
+          <Box sx={{ mb: 2 }}>
+            <LinearProgress />
+          </Box>
+        )}
+
+        {previewError && (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            {previewError}
+          </Alert>
+        )}
+
+        {!previewLoading && holidayPreview.length === 0 && !previewError && (
+          <Typography variant="body2" color="text.secondary">
+            Noch keine Feiertage geladen. Nutzen Sie „Geladene Feiertage anzeigen“, um die gespeicherten Daten einzusehen.
+          </Typography>
+        )}
+
+        {holidayPreview.length > 0 && (
+          <TableContainer component={Paper} variant="outlined">
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Datum</TableCell>
+                  <TableCell>Feiertag</TableCell>
+                  <TableCell>Bundesland</TableCell>
+                  <TableCell>Typ</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {holidayPreview.map((holiday) => (
+                  <TableRow key={`${holiday.date}-${holiday.name}-${holiday.state || 'NATIONAL'}`}>
+                    <TableCell>{new Date(holiday.date).toLocaleDateString('de-DE')}</TableCell>
+                    <TableCell>{holiday.name}</TableCell>
+                    <TableCell>
+                      {holiday.state && holiday.state !== 'ALL' ? (GERMAN_STATES[holiday.state] || holiday.state) : 'Bundesweit'}
+                    </TableCell>
+                    <TableCell>{holiday.type || 'public'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        )}
+
+        <Box sx={{ mt: 2, display: 'flex', justifyContent: 'flex-end' }}>
+          <Button
+            variant="outlined"
+            startIcon={<VisibilityIcon />}
+            onClick={() => loadHolidayPreview()}
+            disabled={loading || previewLoading}
+          >
+            Geladene Feiertage anzeigen
+          </Button>
+        </Box>
+      </Paper>
 
       {/* Actions */}
       <Paper sx={{ p: 2 }}>

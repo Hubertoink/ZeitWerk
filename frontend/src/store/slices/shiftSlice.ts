@@ -101,7 +101,7 @@ export const createShift = createAsyncThunk(
 export const updateShift = createAsyncThunk(
   'shifts/updateShift',
   async (
-    { id, data }: { id: number; data: { date?: string; start_time?: string; end_time?: string; startTime?: string; endTime?: string; employeeId?: string; notes?: string } },
+    { id, data }: { id: number; data: { date?: string; start_time?: string; end_time?: string; startTime?: string; endTime?: string; employeeId?: string; organizationId?: string | null; notes?: string } },
     { rejectWithValue }
   ) => {
     try {
@@ -116,6 +116,7 @@ export const updateShift = createAsyncThunk(
   if (data.endTime) updateData.endTime = data.endTime;
   if (data.employeeId !== undefined) updateData.employeeId = data.employeeId;
   if (data.notes !== undefined) updateData.notes = data.notes;
+  if (data.organizationId !== undefined) updateData.organizationId = data.organizationId;
       
   const result = await apiService.updateShift(id.toString(), updateData);
       

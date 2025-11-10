@@ -418,6 +418,42 @@ class JsonDatabase {
         };
     }
 
+    // Shifts grouped by year (for cleanup UI)
+    getShiftYears() {
+        try {
+            const counts = new Map();
+            for (const s of this.data.shifts || []) {
+                const y = new Date(s.date).getFullYear();
+                if (!Number.isFinite(y)) continue;
+                counts.set(y, (counts.get(y) || 0) + 1);
+            }
+            return Array.from(counts.entries())
+                .map(([year, count]) => ({ year, count }))
+                .sort((a, b) => b.year - a.year);
+        } catch (e) {
+            return [];
+        }
+    }
+
+    // Purge shifts for a specific year; returns number deleted
+    purgeShiftsByYear(year) {
+        try {
+            const y = parseInt(year, 10);
+            if (!y || !Number.isFinite(y)) return 0;
+            const before = this.data.shifts.length;
+            this.data.shifts = (this.data.shifts || []).filter(s => {
+                const sy = new Date(s.date).getFullYear();
+                return sy !== y;
+            });
+            const deleted = before - this.data.shifts.length;
+            if (deleted > 0) this.save();
+            return deleted;
+        } catch (e) {
+            console.error('purgeShiftsByYear failed', e);
+            return 0;
+        }
+    }
+
     // Backup erstellen
     createBackup() {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -504,8 +540,19 @@ class JsonDatabase {
                 holidays = holidays.filter(h => new Date(h.date).getFullYear() === filters.year);
             }
 
+            // State filter:
+            // - If a specific state (e.g., 'BY') is requested, return holidays for that state
+            //   plus nationwide ones (where state is null/undefined).
+            // - If state is 'ALL' or not provided, do NOT filter by state so that
+            //   both nationwide and all state-specific holidays are returned.
             if (filters.state) {
-                holidays = holidays.filter(h => h.state === filters.state || !h.state);
+                const requestedState = String(filters.state).toUpperCase();
+                if (requestedState !== 'ALL') {
+                    holidays = holidays.filter(h => {
+                        const holidayState = h.state ? String(h.state).toUpperCase() : null;
+                        return !holidayState || holidayState === requestedState;
+                    });
+                }
             }
 
             if (filters.startDate && filters.endDate) {
@@ -521,15 +568,21 @@ class JsonDatabase {
 
     async insertHolidays(holidays) {
         try {
-            // Entferne existierende Holidays für die gleichen Daten/States
-            holidays.forEach(newHoliday => {
-                this.data.holidays = this.data.holidays.filter(existing => 
-                    !(existing.date === newHoliday.date && existing.state === newHoliday.state)
-                );
-            });
+            // Deduplicate incoming holidays by (date, name, state)
+            const normalizeState = (s) => (s === undefined || s === null) ? 'ALL' : s;
+            const toKey = (h) => `${h.date}|${h.name}|${normalizeState(h.state)}`;
+            const uniqueIncomingMap = new Map();
+            for (const h of holidays) {
+                uniqueIncomingMap.set(toKey(h), h);
+            }
+            const uniqueIncoming = Array.from(uniqueIncomingMap.values());
 
-            // Füge neue Holidays hinzu
-            this.data.holidays.push(...holidays.map(holiday => ({
+            // Remove exact duplicates already present in DB (same date+name+state)
+            const incomingKeys = new Set(uniqueIncoming.map(toKey));
+            this.data.holidays = this.data.holidays.filter(existing => !incomingKeys.has(toKey(existing)));
+
+            // Insert new unique holidays
+            const toInsert = uniqueIncoming.map(holiday => ({
                 id: Date.now() + Math.random(),
                 date: holiday.date,
                 name: holiday.name,
@@ -537,10 +590,12 @@ class JsonDatabase {
                 state: holiday.state,
                 year: new Date(holiday.date).getFullYear(),
                 created_at: new Date().toISOString()
-            })));
+            }));
+
+            this.data.holidays.push(...toInsert);
 
             this.save();
-            console.log(`✅ Inserted ${holidays.length} holidays`);
+            console.log(`✅ Inserted ${toInsert.length} holidays`);
             return true;
         } catch (error) {
             console.error('❌ Failed to insert holidays:', error);
@@ -572,23 +627,21 @@ class JsonDatabase {
                 console.log(`✅ Cleared holidays for ${state} ${year}`);
             } else if (state) {
                 // Lösche alle Feiertage für einen State
-                this.data.holidays = this.data.holidays.filter(holiday => 
-                    holiday.state !== state
-                );
+                this.data.holidays = this.data.holidays.filter(holiday => holiday.state !== state);
                 console.log(`✅ Cleared all holidays for ${state}`);
             } else {
-                // Lösche alle Feiertage
-                this.data.holidays = [];
-                console.log(`✅ Cleared all holidays`);
+                // „Alle Feiertage löschen“ soll nur bundesweite (state=null/ALL) behalten
+                this.data.holidays = this.data.holidays.filter(holiday => !holiday.state || holiday.state === 'ALL');
+                console.log(`✅ Cleared all state-specific holidays; kept nationwide holidays`);
             }
 
-            // Lösche auch die Cache-Info
+            // Lösche/aktualisiere auch die Cache-Info
             if (state) {
-                this.data.holidayCacheInfo = this.data.holidayCacheInfo.filter(info => 
-                    info.state !== state
-                );
+                // Wenn ein spezifischer State bereinigt wird, entferne dessen Cache-Info
+                this.data.holidayCacheInfo = this.data.holidayCacheInfo.filter(info => info.state !== state);
             } else {
-                this.data.holidayCacheInfo = [];
+                // Beim globalen Clear: nur bundesweite Cache-Info behalten
+                this.data.holidayCacheInfo = this.data.holidayCacheInfo.filter(info => info.state === 'ALL' || !info.state);
             }
 
             this.save();

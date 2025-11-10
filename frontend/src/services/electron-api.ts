@@ -198,6 +198,24 @@ class ElectronAPIService {
     }
   }
 
+  async getShiftYears(): Promise<Array<{ year: number; count: number }>> {
+    try {
+      return await (this.api as any).getShiftYears();
+    } catch (error) {
+      console.error('ElectronAPI Error - getShiftYears:', error);
+      return [];
+    }
+  }
+
+  async purgeShiftsByYear(year: number): Promise<{ success: boolean; deleted: number }>{
+    try {
+      return await (this.api as any).purgeShiftsByYear(year);
+    } catch (error) {
+      console.error('ElectronAPI Error - purgeShiftsByYear:', error);
+      return { success: false, deleted: 0 };
+    }
+  }
+
   async createBackup(): Promise<string> {
     try {
       return await this.api.createBackup();

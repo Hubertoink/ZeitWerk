@@ -65,9 +65,15 @@ interface IElectronAPI {
   selectFile: (options: any) => Promise<any>;
   saveFile: (options: any) => Promise<any>;
   showSaveDialog?: (options: any) => Promise<any>; // Optional legacy alias
-  writeFile: (filePath: string, content: string) => Promise<{ success: boolean; path?: string; message?: string }>;
+  writeFile: (filePath: string, content: string, options?: { base64?: boolean; encoding?: string }) => Promise<{ success: boolean; path?: string; message?: string }>;
   importEmployeePhoto: () => Promise<{ success: boolean; path?: string; fileUrl?: string; filename?: string; message?: string }>;
   toFileUrl: (absolutePath: string) => string;
+
+  // Export folder helpers
+  getExportFolder: () => Promise<string | null>;
+  setExportFolder: (path: string) => Promise<{ success: boolean; path?: string; error?: string }>;
+  clearExportFolder: () => Promise<{ success: boolean; error?: string }>;
+  writeExportFile: (fileName: string, content: string, options?: { base64?: boolean; encoding?: string }) => Promise<{ success: boolean; path?: string; error?: string }>;
   
   // Database Path Management
   getDatabasePathInfo: () => Promise<{

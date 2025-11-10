@@ -205,6 +205,7 @@ const OrganizationList: React.FC = () => {
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
+          sx={{ mt: 1 }}
         >
           Neue Organisation
         </Button>

@@ -1,9 +1,8 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { 
-  Box, 
-  Typography, 
-  Paper, 
-  IconButton, 
+import React, { useEffect, useState, useCallback, useMemo, useLayoutEffect, useRef } from 'react';
+import {
+  Typography,
+  Paper,
+  IconButton,
   Button,
   Card,
   CardContent,
@@ -19,21 +18,17 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField,
+  Tooltip,
+  Popover,
+  Box,
   Snackbar,
-  Alert
+  Alert,
+  TextField
 } from '@mui/material';
-import { Tooltip } from '@mui/material';
-import { 
-  ChevronLeft, 
-  ChevronRight,
-  Person as PersonIcon,
-  Close as CloseIcon,
-  ContentCopy as CopyIcon,
-  
-} from '@mui/icons-material';
+import { ChevronLeft, ChevronRight, Person as PersonIcon, Close as CloseIcon, ContentCopy as CopyIcon, InfoOutlined, DragIndicator, Reorder as ReorderIcon } from '@mui/icons-material';
+import type { Theme } from '@mui/material/styles';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
-import { setCurrentDate, navigateWeek } from '../../store/slices/calendarSlice';
+import { setWeekDate, navigateWeek } from '../../store/slices/calendarSlice';
 import { fetchEmployees } from '../../store/slices/employeeSlice';
 import { fetchShiftTypes } from '../../store/slices/shiftTypeSlice';
 import { fetchShifts, createShift, updateShift, deleteShift } from '../../store/slices/shiftSlice';
@@ -45,6 +40,7 @@ import { VacationPeriod } from '../../types/settings';
 import BulkCreateShiftForm from './BulkCreateShiftForm';
 import { buildWeekExcelFromShifts, saveWeekExcel } from '../../utils/excelExport';
 import { getOpeningHoursForDay, formatOpeningHours } from '../../utils/openingHours';
+import TemplateActions from './TemplateActions';
 
 // Helper: parse HH:mm to minutes
 function parseTimeToMinutes(t?: string): number {
@@ -71,6 +67,27 @@ function minutesToHM(total: number): string {
   return `${sign}${h}:${String(m).padStart(2, '0')}`;
 }
 
+// Helper: duration between start and end in minutes, treating end "00:00" as 24:00 when start > 0
+function durationWithMidnight(startStr?: string, endStr?: string): number {
+  const s = parseTimeToMinutes(startStr);
+  let e = parseTimeToMinutes(endStr);
+  // Accept 00:00 as 24:00 if start is later on the same day
+  if (e === 0 && s > 0 && (endStr === '00:00' || endStr === '0:00' || endStr === '00:0' || endStr === '00:00')) {
+    e = 24 * 60;
+  }
+  return Math.max(0, e - s);
+}
+
+// Helper: display end time as 24:00 when end is 00:00 and start > 0
+function endDisplayWithMidnight(startStr?: string, endStr?: string): string {
+  const s = parseTimeToMinutes(startStr);
+  const e = parseTimeToMinutes(endStr);
+  if (e === 0 && s > 0 && (endStr === '00:00' || endStr === '0:00' || endStr === '00:0' || endStr === '00:00')) {
+    return '24:00';
+  }
+  return endStr || '';
+}
+
 const WeekView: React.FC = () => {
   const dispatch = useAppDispatch();
   const { settings } = useSettings();
@@ -80,7 +97,7 @@ const WeekView: React.FC = () => {
   const { selectedOrganization } = useAppSelector((state: any) => state.organizations);
   const shiftsState = useAppSelector((state: any) => state.shifts);
   
-  const currentDate = calendar?.currentDate ? new Date(calendar.currentDate) : new Date();
+  const currentDate = calendar?.weekDate ? new Date(calendar.weekDate) : new Date();
   const shifts = shiftsState?.shifts || [];
 
   const [weekDays, setWeekDays] = useState<Date[]>([]);
@@ -100,6 +117,49 @@ const WeekView: React.FC = () => {
     date: null as string | null 
   });
   const [weekCopyDialog, setWeekCopyDialog] = useState({ open: false });
+  // Reorder mode for employees
+  const [isReorderMode, setIsReorderMode] = useState(false);
+  const [draftEmployeeOrder, setDraftEmployeeOrder] = useState<string[]>([]);
+  // Dynamic height calc for inner table to avoid outer page scroll
+  const tableRef = useRef<HTMLDivElement | null>(null);
+  const [tableHeight, setTableHeight] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const compute = () => {
+      if (tableRef.current) {
+        const rect = tableRef.current.getBoundingClientRect();
+        const vh = window.innerHeight;
+        // small bottom gap to avoid accidental overflow due to borders/shadows
+        const footerGap = 8;
+        const h = Math.max(200, Math.floor(vh - rect.top - footerGap));
+        setTableHeight(h);
+      }
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    return () => window.removeEventListener('resize', compute);
+  }, []);
+  // Shortcuts popover state (click to toggle)
+  const [shortcutsAnchor, setShortcutsAnchor] = useState<HTMLElement | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const toggleShortcuts = (e: React.MouseEvent<HTMLElement>) => {
+    if (shortcutsOpen) {
+      setShortcutsOpen(false);
+      return;
+    }
+    setShortcutsAnchor(e.currentTarget);
+    setShortcutsOpen(true);
+  };
+  // Copy buffer for copy-then-click workflow
+  const [copyBuffer, setCopyBuffer] = useState<any | null>(null);
+  // Flexible shift time selection dialog state
+  const [flexDialog, setFlexDialog] = useState({
+    open: false,
+    employeeId: null as number | null,
+    date: null as string | null,
+    shiftType: null as any,
+    startTime: '09:00',
+    endTime: '17:00'
+  });
 
   // Serialize vacation periods from settings to create a stable dependency key
   const vacationPeriodsKey = useMemo(() => JSON.stringify(settings?.calendar?.vacationPeriods || []), [settings?.calendar?.vacationPeriods]);
@@ -130,11 +190,17 @@ const WeekView: React.FC = () => {
     }
   }, [currentDate, settings?.calendar?.weekViewDays, settings?.calendar?.holidayRegion, vacationPeriodsKey, weekDays]);
 
+  // Initial data fetch: only fetch missing resources to reduce latency
   useEffect(() => {
-    dispatch(fetchEmployees());
-    dispatch(fetchShiftTypes());
-    dispatch(fetchShifts({}));
-  }, [dispatch]);
+    const shouldFetchEmployees = !employees || (Array.isArray(employees) && employees.length === 0);
+    const shouldFetchShiftTypes = !shiftTypes || (Array.isArray(shiftTypes) && shiftTypes.length === 0);
+    // Shifts can be many; fetch only when empty
+    const shouldFetchShifts = !shifts || (Array.isArray(shifts) && shifts.length === 0);
+
+    if (shouldFetchEmployees) dispatch(fetchEmployees());
+    if (shouldFetchShiftTypes) dispatch(fetchShiftTypes());
+    if (shouldFetchShifts) dispatch(fetchShifts({}));
+  }, [dispatch, /* size snapshots */ (employees || []).length, (shiftTypes || []).length, (shifts || []).length]);
 
   // Tastatur-Navigation
   useEffect(() => {
@@ -165,6 +231,7 @@ const WeekView: React.FC = () => {
           setConflictDialog(prev => ({ ...prev, open: false }));
           setBulkCreateDialog({ open: false, employeeId: null, date: null });
           setWeekCopyDialog({ open: false });
+          setFlexDialog(prev => ({ ...prev, open: false }));
           break;
       }
     };
@@ -182,7 +249,7 @@ const WeekView: React.FC = () => {
   };
 
   const handleToday = () => {
-    dispatch(setCurrentDate(new Date().toISOString()));
+  dispatch(setWeekDate(new Date().toISOString()));
   };
 
   const handleExcelWeekExport = async () => {
@@ -192,11 +259,18 @@ const WeekView: React.FC = () => {
         employees: filteredEmployees,
         days: weekDays,
         getShifts: getShiftsForEmployeeAndDay,
-        organizationName: selectedOrganization?.name
+        organizationName: selectedOrganization?.name,
+        vacationPeriods: (settings?.calendar?.vacationPeriods || []).map((p: any) => ({
+          startDate: p.startDate,
+          endDate: p.endDate,
+          affectsScheduling: p.affectsScheduling !== false,
+          organizationId: p.organizationId
+        })),
+        organizationId: selectedOrganization?.id
       });
   const defaultName = `Wochenplan_${format(weekDays[0], 'yyyy-MM-dd')}.xlsx`;
-  const ok = await saveWeekExcel(data, defaultName);
-  setSnackbar({ open: true, message: ok ? 'Excel-Wochenexport gespeichert' : 'Export abgebrochen oder fehlgeschlagen', severity: ok ? 'success' as const : 'error' as const });
+  const res = await saveWeekExcel(data, defaultName);
+  setSnackbar({ open: true, message: res.ok ? (res.path ? `Gespeichert unter: ${res.path}` : 'Excel-Wochenexport gespeichert') : 'Export abgebrochen oder fehlgeschlagen', severity: res.ok ? 'success' as const : 'error' as const });
     } catch (e:any) {
       console.error('Excel week export error:', e);
       setSnackbar({ open: true, message: 'Fehler beim Excel-Export', severity: 'error' });
@@ -206,9 +280,10 @@ const WeekView: React.FC = () => {
   // Helper to render shift type label with times when available
   const renderShiftTypeLabel = useCallback((st: any) => {
     // For all-day or absence types, do not show times in the badge label
+    if (st?.isFlexible) return `${st?.name || 'Schicht'} (flexibel)`;
     if (st?.isAllDay || st?.category === 'absence') return st?.name || 'Schicht';
-    const s: string | undefined = st?.startTime;
-    const e: string | undefined = st?.endTime;
+  const s: string | undefined = st?.startTime || (st?.isFlexible ? '10:00' : undefined);
+  const e: string | undefined = st?.endTime || (st?.isFlexible ? '18:30' : undefined);
     const hasTimes = typeof s === 'string' && s.length >= 4 && typeof e === 'string' && e.length >= 4;
     return hasTimes ? `${st.name} (${s} - ${e})` : st.name;
   }, []);
@@ -237,36 +312,99 @@ const WeekView: React.FC = () => {
     return weekShiftsMap.get(key) || [];
   }, [weekShiftsMap]);
 
-  // Compute weekly working minutes per employee (regular shifts only, per-day breaks applied)
+  // Compute weekly working minutes per employee
+  // Rules:
+  // - Sum time-based regular shifts (countsTowardHours !== false) with TVöD breaks applied
+  // - Absences never add time directly; if all-day absence and no regular shift that day, add planned (net) daily hours
+  // - All-day, non-absence, counting shift types do not use their 23:59-like span; if no regular shift that day, add planned (net) daily hours instead
   const weeklyMinutesByEmployee = useMemo(() => {
     const map = new Map<string, number>();
     employees.forEach((emp: any) => {
       let sum = 0;
       weekDays.forEach(day => {
         const dayShifts = getShiftsForEmployeeAndDay(emp.id, day) || [];
-        // sum only regular shift minutes
-        let dayMinutes = 0;
+        // sum only regular time-based shift minutes
+        let regularMinutes = 0;
+        let hasRegularShift = false;
+        let hasAllDayAbsence = false;
+        let hasAllDayCountingNonAbsence = false;
         dayShifts.forEach((s: any) => {
-          const isAbsence = (s.shiftTypeCategory || s.category) === 'absence';
-          const nonCounting = s.shiftTypeCountsTowardHours === false;
-          if (isAbsence || nonCounting) return;
-          const start = parseTimeToMinutes(s.startTime || s.start_time);
-          const end = parseTimeToMinutes(s.endTime || s.end_time);
-          if (end > start) dayMinutes += (end - start);
+          const linkedType = shiftTypes.find((st: any) => st.id?.toString?.() === (s.shiftTypeId || s.shift_type_id)?.toString?.());
+          const isAbsence = ((s.shiftTypeCategory || s.category) === 'absence') || (linkedType?.category === 'absence');
+          const isAllDay = !!s.shiftTypeIsAllDay || linkedType?.isAllDay === true;
+          // Prefer live shift type config; fall back to shift snapshot
+          let countsToward = true;
+          if (typeof linkedType?.countsTowardHours === 'boolean') {
+            countsToward = linkedType.countsTowardHours as boolean;
+          } else if (s.shiftTypeCountsTowardHours === false) {
+            countsToward = false;
+          }
+
+          if (isAbsence) {
+            // All-day absence detection
+            if (isAllDay) {
+              hasAllDayAbsence = true;
+              return;
+            }
+            // Heuristic: treat spans >= 23h as all-day
+            const durAbs = durationWithMidnight(s.startTime || s.start_time, s.endTime || s.end_time);
+            if (durAbs >= 23 * 60) hasAllDayAbsence = true;
+            return; // absences never contribute minutes directly
+          }
+
+          // Non-absence
+          if (isAllDay) {
+            // For all-day non-absence: if it counts, remember to add planned hours instead (no duration summing)
+            if (countsToward) hasAllDayCountingNonAbsence = true;
+            return;
+          }
+
+          // Time-based regular shift
+          if (!countsToward) return;
+          const dur = durationWithMidnight(s.startTime || s.start_time, s.endTime || s.end_time);
+          if (dur > 0) {
+            regularMinutes += dur;
+            hasRegularShift = true;
+          }
         });
-        sum += applyBreaks(dayMinutes);
+
+        // Apply breaks to regular minutes only (German rules)
+        let dayTotal = applyBreaks(regularMinutes);
+
+        // Add planned net hours when no regular shift exists and day has an all-day absence or an all-day counting non-absence
+        if (!hasRegularShift && (hasAllDayAbsence || hasAllDayCountingNonAbsence)) {
+          const keyMap = ['sun','mon','tue','wed','thu','fri','sat'] as const;
+          const k = keyMap[day.getDay()];
+          const plan = emp.dailyHoursPlan || {};
+          const hours = typeof plan[k] === 'number' ? plan[k] : (plan[k] ? parseFloat(String(plan[k])) : 0);
+          const planMinutes = !isNaN(hours) && isFinite(hours) && hours > 0 ? Math.round(hours * 60) : 0;
+          // Do NOT apply breaks to planned hours; they are already net hours
+          dayTotal += planMinutes;
+        }
+
+        sum += dayTotal;
       });
       map.set(emp.id.toString(), sum);
     });
     return map;
-  }, [employees, weekDays, getShiftsForEmployeeAndDay]);
+  }, [employees, weekDays, getShiftsForEmployeeAndDay, shiftTypes]);
 
   // Hilfsfunktion: Prüfe ob ein Tag in einer Schließzeit liegt
   const isVacationDay = useCallback((date: Date): VacationPeriod | null => {
+    const parseLocalYMD = (s?: string) => {
+      if (!s) return null;
+      const parts = s.split('-').map(Number);
+      if (parts.length !== 3 || parts.some(n => isNaN(n as number))) return null;
+      const [y, m, d] = parts as [number, number, number];
+      return new Date(y, m - 1, d);
+    };
+    const normalizedDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
     return vacationPeriods.find(period => {
-      const startDate = new Date(period.startDate);
-      const endDate = new Date(period.endDate);
-      return date >= startDate && date <= endDate;
+      const s = parseLocalYMD(period.startDate) || new Date(period.startDate);
+      const e = parseLocalYMD(period.endDate) || new Date(period.endDate);
+      const start = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+      const end = new Date(e.getFullYear(), e.getMonth(), e.getDate());
+      return normalizedDate >= start && normalizedDate <= end;
     }) || null;
   }, [vacationPeriods]);
 
@@ -340,10 +478,33 @@ const WeekView: React.FC = () => {
 
   const handleShiftDrop = async (shiftType: any, employeeId: number, date: Date) => {
     try {
-      // Ensure we always have valid default times
+      // Flexible Schichten: Zeiten beim Drop abfragen
+      if (shiftType.isFlexible) {
+        // Standard für flexible Schichten: 10:00 - 18:30 (statt 00:00 - 23:59)
+        const defaultStartTime = shiftType.startTime || '10:00';
+        const defaultEndTime = shiftType.endTime || '18:30';
+        setFlexDialog({
+          open: true,
+          employeeId,
+          date: format(date, 'yyyy-MM-dd'),
+          shiftType,
+          startTime: defaultStartTime,
+          endTime: defaultEndTime
+        });
+        return;
+      }
+
+      // Ensure we always have valid default times for nicht-flexible Typen
       const defaultStartTime = shiftType.startTime || '09:00';
       const defaultEndTime = shiftType.endTime || '17:00';
       
+      // Resolve organization: prefer selected organization, else employee's org
+      const empOrgId = (employees.find((e: any) => e.id?.toString?.() === employeeId.toString()) as any)?.organizationId;
+      const orgId = selectedOrganization?.id ?? empOrgId;
+      if (!orgId) {
+        setSnackbar({ open: true, message: 'Keine Organisation ausgewählt – bitte Organisation wählen.', severity: 'error' });
+        return;
+      }
       const shiftData = {
         shiftTypeId: shiftType.id,
         employeeId: employeeId.toString(),
@@ -351,7 +512,7 @@ const WeekView: React.FC = () => {
         startTime: defaultStartTime,
         endTime: defaultEndTime,
         notes: `${shiftType.name} Schicht`,
-        organizationUnitId: selectedOrganization?.id || '1'
+        organizationUnitId: String(orgId)
       };
 
       // Prüfe auf Konflikte
@@ -400,12 +561,18 @@ const WeekView: React.FC = () => {
         return;
       }
 
+      // Determine target organization (prefer selected organization, else target employee's organization)
+      const targetEmpOrgId = (employees.find((e: any) => e.id?.toString?.() === employeeId.toString()) as any)?.organizationId;
+      const targetOrganizationId = (selectedOrganization?.id ?? targetEmpOrgId)?.toString?.();
+
       const newShiftData = {
         shiftTypeId: (shift.shiftTypeId || shift.shift_type_id)?.toString(),
         employeeId: employeeId.toString(),
         date: format(date, 'yyyy-MM-dd'),
         startTime: shift.startTime || shift.start_time || '09:00',
         endTime: shift.endTime || shift.end_time || '17:00',
+        // ensure organization updates when moving across employees/orgs
+        organizationId: targetOrganizationId
       };
 
       // Conflict check similar to creating a shift
@@ -426,7 +593,8 @@ const WeekView: React.FC = () => {
 
       await moveShiftWithData(parseInt(shiftId), {
         date: format(date, 'yyyy-MM-dd'),
-        employeeId: employeeId.toString()
+        employeeId: employeeId.toString(),
+        organizationId: targetOrganizationId
       });
     } catch (error) {
       console.error('Fehler beim Verschieben der Schicht:', error);
@@ -434,7 +602,55 @@ const WeekView: React.FC = () => {
     }
   };
 
-  const moveShiftWithData = async (id: number, data: { date?: string; employeeId?: string }) => {
+  // Duplicate an existing shift to a target employee/day
+  const handleCopyExistingShift = async (shift: any, employeeId: number, date: Date) => {
+    try {
+      const empOrgId = (employees.find((e: any) => e.id?.toString?.() === employeeId.toString()) as any)?.organizationId;
+      // Prefer TARGET org (selected or employee), fallback to source shift org
+      const orgId = (selectedOrganization?.id ?? empOrgId ?? (shift.organizationId || shift.organization_id)) as string | number | undefined;
+      if (!orgId) {
+        setSnackbar({ open: true, message: 'Keine Organisation ausgewählt – bitte Organisation wählen.', severity: 'error' });
+        return;
+      }
+      const newShiftData = {
+        shiftTypeId: (shift.shiftTypeId || shift.shift_type_id)?.toString(),
+        employeeId: employeeId.toString(),
+        date: format(date, 'yyyy-MM-dd'),
+        startTime: shift.startTime || shift.start_time || '09:00',
+        endTime: shift.endTime || shift.end_time || '17:00',
+        notes: shift.notes || '',
+        organizationUnitId: String(orgId)
+      };
+
+      const conflictCheck = checkShiftConflicts(newShiftData);
+      if (conflictCheck.hasConflict && !conflictCheck.canOverride) {
+        setSnackbar({
+          open: true,
+          message: conflictCheck.conflicts[0].message,
+          severity: 'error'
+        });
+        return;
+      }
+
+      if (conflictCheck.hasConflict && conflictCheck.canOverride) {
+        setConflictDialog({
+          open: true,
+          newShift: newShiftData,
+          existingShifts: conflictCheck.conflicts.map(c => c.existing),
+          message: conflictCheck.conflicts[0].message
+        });
+        return;
+      }
+
+      await createShiftWithData(newShiftData);
+      setSnackbar({ open: true, message: 'Schicht kopiert', severity: 'success' });
+    } catch (error) {
+      console.error('Fehler beim Kopieren der Schicht:', error);
+      setSnackbar({ open: true, message: 'Fehler beim Kopieren der Schicht', severity: 'error' });
+    }
+  };
+
+  const moveShiftWithData = async (id: number, data: { date?: string; employeeId?: string; organizationId?: string | null | undefined }) => {
     await dispatch(updateShift({ id, data })).unwrap();
   // Refresh once after update
   dispatch(fetchShifts({}));
@@ -531,6 +747,10 @@ const WeekView: React.FC = () => {
       // Erstelle neue Schichten für die nächste Woche
       for (const shift of currentWeekShifts) {
         const newDate = addDays(new Date(shift.date), 7);
+        // Ermittele Ziel-Organisation: bevorzugt ausgewählte Organisation, sonst Organisation des Mitarbeiters der Schicht
+        const targetEmployeeId = (shift.employeeId || shift.employee_id)?.toString?.();
+        const targetEmpOrgId = (employees.find((e: any) => e.id?.toString?.() === targetEmployeeId) as any)?.organizationId;
+        const orgIdForCopy = (selectedOrganization?.id ?? targetEmpOrgId) as string | number | undefined;
         const newShiftData = {
           // Normalisiere Feldnamen (unterstütze snake_case und camelCase)
           shiftTypeId: (shift.shiftTypeId || shift.shift_type_id)?.toString(),
@@ -539,8 +759,12 @@ const WeekView: React.FC = () => {
           startTime: shift.startTime || shift.start_time || '09:00',
           endTime: shift.endTime || shift.end_time || '17:00',
           notes: shift.notes,
-          organizationUnitId: selectedOrganization?.id || '1'
+          organizationUnitId: String(orgIdForCopy || '')
         };
+        if (!newShiftData.organizationUnitId) {
+          setSnackbar({ open: true, message: 'Keine Organisation ausgewählt – Woche konnte nicht kopiert werden.', severity: 'error' });
+          return;
+        }
         await dispatch(createShift(newShiftData)).unwrap();
       }
       
@@ -558,22 +782,214 @@ const WeekView: React.FC = () => {
     ? employees.filter((emp: any) => emp.organizationId === selectedOrganization.id)
     : employees;
 
+  // Stable key for current employees list (ids), avoids re-init on referential changes
+  const employeesIdsKey = useMemo(() => {
+    try {
+      return (filteredEmployees || []).map((e: any) => e.id?.toString?.() || '').join(',');
+    } catch { return ''; }
+  }, [filteredEmployees]);
+
+  // Compute sorted employees based on settings (alphabetical vs custom mapping)
+  const sortedEmployees = useMemo(() => {
+    const list = [...(filteredEmployees || [])];
+    const mode = settings?.ui?.employeeOrderMode || 'alphabetical';
+    const orgId = selectedOrganization?.id?.toString?.();
+    const map = (settings?.ui?.employeeOrderByOrg || {});
+    const order = (orgId && map[orgId]) ? map[orgId] : [];
+    if (mode !== 'custom' || !orgId || !Array.isArray(order) || order.length === 0) {
+      return list.sort((a: any, b: any) => {
+        const an = `${a.firstName || ''} ${a.lastName || ''}`.trim().toLowerCase();
+        const bn = `${b.firstName || ''} ${b.lastName || ''}`.trim().toLowerCase();
+        return an.localeCompare(bn, 'de');
+      });
+    }
+    const indexOf = (id: string) => {
+      const i = order.indexOf(id);
+      return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+    };
+    return list.sort((a: any, b: any) => {
+      const ai = indexOf(a.id?.toString?.() || '');
+      const bi = indexOf(b.id?.toString?.() || '');
+      if (ai !== bi) return ai - bi;
+      // Stable fallback alphabetical for items not in order
+      const an = `${a.firstName || ''} ${a.lastName || ''}`.trim().toLowerCase();
+      const bn = `${b.firstName || ''} ${b.lastName || ''}`.trim().toLowerCase();
+      return an.localeCompare(bn, 'de');
+    });
+  }, [filteredEmployees, settings?.ui?.employeeOrderMode, settings?.ui?.employeeOrderByOrg, selectedOrganization?.id]);
+
+  // Rows to render: while reordering use draft mapping; otherwise use sorted list
+  const renderEmployees = useMemo(() => {
+    if (isReorderMode) {
+      const mapById = new Map((filteredEmployees || []).map((e: any) => [e.id?.toString?.() || '', e] as const));
+      return draftEmployeeOrder.map(id => mapById.get(id)).filter(Boolean) as any[];
+    }
+    return sortedEmployees;
+  }, [isReorderMode, draftEmployeeOrder, filteredEmployees, sortedEmployees]);
+
+  // Initialize draft order when entering reorder mode or when org/employees change
+  useEffect(() => {
+    if (!isReorderMode) return;
+    const orgId = selectedOrganization?.id?.toString?.();
+    const map = settings?.ui?.employeeOrderByOrg || {};
+    const configured = (orgId && Array.isArray(map[orgId]) ? map[orgId] : []) as string[];
+    const present = new Set((filteredEmployees || []).map((e: any) => e.id?.toString?.() || ''));
+    // Keep only present ids from configured order
+    const base = configured.filter(id => present.has(id));
+    // Append missing employees alphabetisch
+    const missing = (filteredEmployees || [])
+      .filter((e: any) => !base.includes(e.id?.toString?.() || ''))
+      .sort((a: any, b: any) => (`${a.firstName || ''} ${a.lastName || ''}`).localeCompare(`${b.firstName || ''} ${b.lastName || ''}`, 'de'))
+      .map((e: any) => e.id?.toString?.() || '');
+    const next = [...base, ...missing];
+    // Only initialize/adjust if draft is empty or mismatched by ids set/length
+    const sameLength = draftEmployeeOrder.length === next.length;
+    const sameOrder = sameLength && draftEmployeeOrder.every((id, i) => id === next[i]);
+    if (!sameOrder) {
+      setDraftEmployeeOrder(next);
+    }
+  }, [isReorderMode, selectedOrganization?.id, employeesIdsKey, settings?.ui?.employeeOrderByOrg]);
+
+  // Drag handlers for row reordering (native HTML5 drag within the left column)
+  const dragFromIndex = useRef<number | null>(null);
+  const handleRowDragStart = (index: number) => (e: React.DragEvent) => {
+    dragFromIndex.current = index;
+    e.dataTransfer.effectAllowed = 'move';
+    // Set dummy data for some browsers to enable drop
+    try { e.dataTransfer.setData('text/plain', String(index)); } catch {}
+  };
+  const handleRowDragOver = (_index: number) => (e: React.DragEvent) => {
+    if (!isReorderMode) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+  const handleRowDrop = (toIndex: number) => (e: React.DragEvent) => {
+    e.preventDefault();
+    if (!isReorderMode) return;
+    const from = dragFromIndex.current;
+    dragFromIndex.current = null;
+    if (from == null || from === toIndex) return;
+    setDraftEmployeeOrder(prev => {
+      const arr = [...prev];
+      const [moved] = arr.splice(from, 1);
+      arr.splice(toIndex, 0, moved);
+      return arr;
+    });
+  };
+
+  const { updateSettings } = useSettings();
+  const persistCustomOrder = () => {
+    try {
+      const orgId = selectedOrganization?.id?.toString?.();
+      if (!orgId) return;
+      const ui = settings?.ui || {} as any;
+      const map = { ...(ui.employeeOrderByOrg || {}) } as Record<string, string[]>;
+      map[orgId] = draftEmployeeOrder;
+      updateSettings({
+        ...settings,
+        ui: {
+          ...ui,
+          employeeOrderMode: 'custom',
+          employeeOrderByOrg: map
+        }
+      });
+      setIsReorderMode(false);
+      setSnackbar({ open: true, message: 'Reihenfolge gespeichert', severity: 'success' });
+    } catch (e) {
+      console.error('Persist order failed', e);
+      setSnackbar({ open: true, message: 'Fehler beim Speichern der Reihenfolge', severity: 'error' });
+    }
+  };
+  const cancelReorder = () => {
+    setIsReorderMode(false);
+  };
+
   return (
-    <Box sx={{ p: 3 }}>
+    <Box sx={{ px: 3, pt: 3, pb: 0, overflow: 'hidden' }}>
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" component="h1">
-          Wochenansicht
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography variant="h4" component="h1">
+            Wochenansicht
+          </Typography>
+          <IconButton
+            size="small"
+            onClick={toggleShortcuts}
+            aria-label="Tastenkürzel anzeigen"
+            sx={{ ml: 0.5 }}
+          >
+            <InfoOutlined fontSize="small" />
+          </IconButton>
+          <Popover
+            open={shortcutsOpen}
+            anchorEl={shortcutsAnchor}
+            onClose={() => setShortcutsOpen(false)}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+            transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+            disableRestoreFocus
+            disableScrollLock
+            PaperProps={{ sx: { pointerEvents: 'auto' } }}
+          >
+            <Box sx={{ p: 1.5, maxWidth: 360 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>Tastenkürzel</Typography>
+              <Box sx={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 1 }}>
+                <Chip size="small" label="← →" variant="outlined" sx={{ fontSize: '0.7rem' }} />
+                <Typography variant="caption">Woche wechseln</Typography>
+                <Chip size="small" label="Home" variant="outlined" sx={{ fontSize: '0.7rem' }} />
+                <Typography variant="caption">Heute</Typography>
+                <Chip size="small" label="Esc" variant="outlined" sx={{ fontSize: '0.7rem' }} />
+                <Typography variant="caption">Dialoge schließen</Typography>
+                <Chip size="small" label="Strg + Ziehen" variant="outlined" sx={{ fontSize: '0.7rem' }} />
+                <Typography variant="caption">Schicht kopieren</Typography>
+              </Box>
+              <Typography variant="subtitle2" sx={{ mt: 1.5, mb: 0.5, fontWeight: 'bold' }}>Hinweise</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.5 }}>
+                • Schichtarten per Drag & Drop auf eine Mitarbeiter-Zelle ziehen, um eine Schicht anzulegen.<br/>
+                • Bestehende Schicht mit gedrückter Strg-Taste ziehen, um sie zu kopieren (ohne Strg = verschieben).<br/>
+                • Flexible Schichten fragen beim Ablegen nach Start-/Endzeit.<br/>
+                • Konflikte (z. B. doppelte reguläre Schichten) werden erkannt und können ggf. überschrieben werden.
+              </Typography>
+            </Box>
+          </Popover>
+        </Box>
         
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <Button 
-            variant="outlined" 
-            startIcon={<CopyIcon />}
-            onClick={() => setWeekCopyDialog({ open: true })}
-          >
-            Woche kopieren
-          </Button>
+          {/* Sorting controls */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Tooltip title={isReorderMode ? 'Reihenfolge beenden' : 'Reihenfolge bearbeiten'}>
+              <IconButton
+                onClick={() => setIsReorderMode(v => !v)}
+                color={isReorderMode ? 'warning' : 'default'}
+                size="small"
+              >
+                <ReorderIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            {settings?.ui?.employeeOrderMode === 'custom' && !isReorderMode && (
+              <Chip size="small" label="Eigene Reihenfolge aktiv" color="info" />
+            )}
+            {isReorderMode && (
+              <>
+                <Button
+                  variant="text"
+                  onClick={() => {
+                    const ui = settings?.ui || ({} as any);
+                    updateSettings({ ...settings, ui: { ...ui, employeeOrderMode: 'alphabetical' } });
+                  }}
+                  disabled={(settings?.ui?.employeeOrderMode || 'alphabetical') === 'alphabetical'}
+                >
+                  Alphabetisch
+                </Button>
+                <Button variant="outlined" onClick={cancelReorder}>Abbrechen</Button>
+                <Button variant="contained" onClick={persistCustomOrder}>Speichern</Button>
+              </>
+            )}
+          </Box>
+          <Tooltip title="Woche kopieren">
+            <IconButton onClick={() => setWeekCopyDialog({ open: true })} color="primary" size="small">
+              <CopyIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
 
           <Button 
             variant="contained"
@@ -591,38 +1007,21 @@ const WeekView: React.FC = () => {
           >
             Wochenexport (Excel)
           </Button>
-          
-          <Button variant="outlined" onClick={handleToday}>
-            Heute
-          </Button>
-          
-          <IconButton onClick={handlePrevWeek}>
-            <ChevronLeft />
-          </IconButton>
-          
-          <Typography variant="h6" sx={{ minWidth: 200, textAlign: 'center' }}>
-            {weekDays.length > 0 ? (
-              <>
-                {format(weekDays[0], 'dd.MM.yyyy', { locale: de })} - {' '}
-                {format(weekDays[weekDays.length - 1], 'dd.MM.yyyy', { locale: de })}
-              </>
-            ) : (
-              format(currentDate, 'dd.MM.yyyy', { locale: de })
-            )}
-          </Typography>
-          
-          <IconButton onClick={handleNextWeek}>
-            <ChevronRight />
-          </IconButton>
+
+          {/* Templates menu/actions */}
+          <TemplateActions
+            weekDays={weekDays}
+            employees={sortedEmployees}
+            selectedOrganization={selectedOrganization}
+            getShifts={getShiftsForEmployeeAndDay}
+          />
         </Box>
       </Box>
 
       {/* Schichttypen zum Ziehen */}
       <Box sx={{ mb: 3 }}>
-        <Typography variant="h6" sx={{ mb: 2 }}>
-          Schichtarten (per Drag & Drop zuweisen):
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
+        {/* Compact: Shift type chips directly, no heading */}
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
           {shiftTypes.map((shiftType: any) => (
             <Chip
               key={shiftType.id}
@@ -632,10 +1031,13 @@ const WeekView: React.FC = () => {
                 backgroundColor: shiftType.color,
                 color: theme.palette.getContrastText(shiftType.color),
                 fontWeight: 600,
+                px: 1,
+                py: 0.25,
                 cursor: 'grab',
                 '&:hover': { transform: 'scale(1.05)' },
                 '&:active': { cursor: 'grabbing' }
               })}
+              size="small"
               draggable
               onDragStart={(e) => {
                 e.dataTransfer.setData('shiftType', JSON.stringify(shiftType));
@@ -643,38 +1045,11 @@ const WeekView: React.FC = () => {
             />
           ))}
         </Box>
-        
-        {/* Tastatur-Navigation Info */}
-        <Box sx={{ 
-          display: 'flex', 
-          gap: 1, 
-          flexWrap: 'wrap', 
-          alignItems: 'center',
-          backgroundColor: 'action.hover',
-          padding: 1,
-          borderRadius: 1
-        }}>
-          <Typography variant="caption" color="text.secondary">
-            Tastatur:
-          </Typography>
-          <Chip size="small" label="← →" variant="outlined" sx={{ fontSize: '0.7rem' }} />
-          <Typography variant="caption" color="text.secondary">
-            Woche wechseln
-          </Typography>
-          <Chip size="small" label="Home" variant="outlined" sx={{ fontSize: '0.7rem' }} />
-          <Typography variant="caption" color="text.secondary">
-            Heute
-          </Typography>
-          <Chip size="small" label="Esc" variant="outlined" sx={{ fontSize: '0.7rem' }} />
-          <Typography variant="caption" color="text.secondary">
-            Dialoge schließen
-          </Typography>
-        </Box>
       </Box>
 
-      {/* Organisation Info */}
+      {/* Organisation + compact navigation */}
       {selectedOrganization && (
-        <Box sx={{ mb: 2 }}>
+        <Box sx={{ mb: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
           <Chip 
             label={`Organisation: ${selectedOrganization.name}`}
             color="primary"
@@ -686,15 +1061,37 @@ const WeekView: React.FC = () => {
               boxShadow: (theme) => theme.palette.mode === 'dark' ? '0 0 0 2px rgba(255,255,255,0.08) inset' : '0 0 0 2px rgba(0,0,0,0.06) inset'
             }}
           />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <IconButton onClick={handlePrevWeek} size="small"><ChevronLeft /></IconButton>
+            <Typography variant="subtitle1" sx={{ minWidth: 200, textAlign: 'center' }}>
+              {weekDays.length > 0 ? (
+                `${format(weekDays[0], 'dd.MM.yyyy', { locale: de })} - ${format(weekDays[weekDays.length - 1], 'dd.MM.yyyy', { locale: de })}`
+              ) : (
+                format(currentDate, 'dd.MM.yyyy', { locale: de })
+              )}
+            </Typography>
+            <IconButton onClick={handleNextWeek} size="small"><ChevronRight /></IconButton>
+            <Button variant="outlined" size="small" onClick={handleToday}>Heute</Button>
+          </Box>
         </Box>
       )}
 
       {/* Wochenansicht-Grid */}
-      <TableContainer component={Paper} sx={{ maxHeight: 'calc(100vh - 300px)' }}>
+      <TableContainer 
+        component={Paper} 
+        ref={tableRef}
+        sx={{ 
+          height: tableHeight || undefined,
+          maxHeight: tableHeight ? undefined : 'calc(100dvh - 300px)',
+          overflowY: 'auto',
+          // avoid causing an extra outer scrollbar by ensuring inner scroll only when needed
+          scrollbarGutter: 'stable'
+        }}
+      >
         <Table stickyHeader>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ minWidth: 150, fontWeight: 'bold', borderRight: '1px solid', borderRightColor: 'divider' }}>
+              <TableCell sx={{ minWidth: 150, fontWeight: 'bold', borderRight: '1px solid', borderRightColor: 'divider', backgroundColor: 'background.paper', zIndex: 3 }}>
                 Mitarbeiter
               </TableCell>
               {weekDays.map((day, index) => {
@@ -702,11 +1099,7 @@ const WeekView: React.FC = () => {
                 const holiday = isHoliday(day, holidays);
                 const vacation = isVacationDay(day);
                 const isLast = index === weekDays.length - 1;
-                const openingHours = selectedOrganization?.openingHours;
-                const openingText = (openingHours && openingHours.enabled)
-                  ? formatOpeningHours(getOpeningHoursForDay(openingHours, day))
-                  : '';
-                // Hinweis: holiday/vacation werden direkt für Styling/Tooltips genutzt
+                // Hinweis: holiday/vacation werden direkt für Styling/Tooltips genutzt; Öffnungszeiten werden komprimiert angezeigt
                 
                 return (
                   <TableCell 
@@ -718,54 +1111,25 @@ const WeekView: React.FC = () => {
                       backgroundColor: isToday ? 'primary.50' 
                         : vacation ? 'warning.50' 
                         : holiday ? 'error.50' 
-                        : 'inherit',
+                        : 'background.paper',
                       color: isToday ? 'primary.main' 
                         : vacation ? 'warning.main' 
                         : holiday ? 'error.main' 
-                        : 'inherit',
+                        : 'text.primary',
                       borderLeft: vacation ? '4px solid' : 'none',
                       borderLeftColor: vacation ? 'warning.main' : 'inherit',
                       borderRight: isLast ? 'none' : '1px solid',
-                      borderRightColor: 'divider'
+                      borderRightColor: 'divider',
+                      zIndex: 3
                     }}
                   >
                     <Box>
-                      <Typography variant="caption" display="block">
-                        {format(day, 'EEEE', { locale: de })}
-                      </Typography>
                       <Typography variant="subtitle2">
-                        {format(day, 'dd.MM')}
+                        {`${format(day, 'EEE', { locale: de }).replace(/\.$/, '')} ${format(day, 'dd.MM')}`}
                       </Typography>
-                      {!!openingText && (
-                        <Typography 
-                          variant="caption" 
-                          display="block" 
-                          color="text.secondary" 
-                          sx={{ fontSize: '0.65rem', mt: 0.25 }}
-                        >
-                          {openingText}
-                        </Typography>
-                      )}
-                      {holiday && (
-                        <Typography variant="caption" display="block" color="error.main" sx={{ fontSize: '0.6rem' }}>
-                          {holiday.name}
-                        </Typography>
-                      )}
-                      {vacation && (
-                        <Typography 
-                          variant="caption" 
-                          display="block" 
-                          color="warning.main" 
-                          sx={{ 
-                            fontSize: '0.6rem', 
-                            fontWeight: 'bold',
-                            backgroundColor: 'warning.light',
-                            padding: '2px 4px',
-                            borderRadius: 1,
-                            mt: 0.5
-                          }}
-                        >
-                          🏖️ {vacation.name}
+                      {selectedOrganization?.openingHours?.enabled && (
+                        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1 }}>
+                          {formatOpeningHours(getOpeningHoursForDay(selectedOrganization.openingHours, day))}
                         </Typography>
                       )}
                     </Box>
@@ -787,10 +1151,19 @@ const WeekView: React.FC = () => {
             </TableRow>
           </TableHead>
           <TableBody>
-            {filteredEmployees.map((employee: any) => (
-              <TableRow key={employee.id}>
-                <TableCell sx={{ fontWeight: 'medium', borderRight: '1px solid', borderRightColor: 'divider' }}>
+            {renderEmployees.map((employee: any, rowIndex: number) => (
+              <TableRow 
+                key={employee.id}
+                draggable={isReorderMode}
+                onDragStart={handleRowDragStart(rowIndex)}
+                onDragOver={handleRowDragOver(rowIndex)}
+                onDrop={handleRowDrop(rowIndex)}
+              >
+                <TableCell sx={{ fontWeight: 'medium', borderRight: '1px solid', borderRightColor: 'divider', cursor: isReorderMode ? 'move' : 'default' }}>
                   <Box display="flex" alignItems="center" gap={1}>
+                    {isReorderMode && (
+                      <DragIndicator fontSize="small" color="action" />
+                    )}
                     <Avatar 
                       src={(employee.photoPath ? (window as any)?.electronAPI?.toFileUrl?.(employee.photoPath) : employee.photoUrl) || undefined}
                       sx={{ width: 32, height: 32, bgcolor: 'primary.main', fontSize: 14 }}
@@ -810,6 +1183,7 @@ const WeekView: React.FC = () => {
                 {weekDays.map((day, dayIndex) => {
                   const employeeShifts = getShiftsForEmployeeAndDay(employee.id, day);
                   const vacation = isVacationDay(day);
+                  const vacationBlocksScheduling = !!vacation?.affectsScheduling;
                   const isLast = dayIndex === weekDays.length - 1;
                   
                   return (
@@ -828,10 +1202,44 @@ const WeekView: React.FC = () => {
                         '&:hover': { backgroundColor: vacation ? 'warning.100' : 'action.hover' },
                         opacity: vacation ? 0.8 : 1
                       }}
-                      onDrop={(e) => {
+                      onDrop={isReorderMode ? undefined : (e) => {
                         e.preventDefault();
-                        if (vacation) {
-                          // Verhindere Schicht-Drop während Schließzeiten
+                        // During Schließzeit: only block if it affects scheduling, but allow all-day absences and all-day shift types
+                        if (vacationBlocksScheduling) {
+                          const shiftTypeData = e.dataTransfer.getData('shiftType');
+                          if (shiftTypeData) {
+                            try {
+                              const shiftType = JSON.parse(shiftTypeData);
+                              const isAllDayType = !!shiftType?.isAllDay || (shiftType?.category === 'absence');
+                              if (!isAllDayType) return; // block non-all-day/non-absence
+                            } catch { return; }
+                          } else {
+                            // If not creating a new shift (copy/move existing), inspect the existing shift type
+                            const moveShiftData = e.dataTransfer.getData('existingShift');
+                            const copyData = e.dataTransfer.getData('copyShift');
+                            const payload = moveShiftData || copyData;
+                            if (payload) {
+                              try {
+                                const { id } = JSON.parse(payload);
+                                const src = shifts.find((s: any) => s.id?.toString() === String(id));
+                                if (src) {
+                                  const linkedType = shiftTypes.find((st: any) => st.id?.toString?.() === (src.shiftTypeId || src.shift_type_id)?.toString?.());
+                                  const isAllDayType = !!linkedType?.isAllDay || (linkedType?.category === 'absence');
+                                  if (!isAllDayType) return; // block moving/copying non-all-day into blocking Schließzeit
+                                }
+                              } catch { return; }
+                            } else {
+                              return; // nothing to drop
+                            }
+                          }
+                        }
+                        const copyData = e.dataTransfer.getData('copyShift');
+                        if (copyData) {
+                          const src = JSON.parse(copyData);
+                          const srcShift = shifts.find((s: any) => s.id?.toString() === src.id?.toString());
+                          if (srcShift) {
+                            handleCopyExistingShift(srcShift, employee.id, day);
+                          }
                           return;
                         }
                         const moveShiftData = e.dataTransfer.getData('existingShift');
@@ -846,169 +1254,203 @@ const WeekView: React.FC = () => {
                           handleShiftDrop(shiftType, employee.id, day);
                         }
                       }}
-                      onDragOver={(e) => {
+                      onDragOver={isReorderMode ? undefined : (e) => {
                         e.preventDefault();
                       }}
-                      onClick={() => {
-                        if (!vacation) {
-                          handleCellClick(employee.id, day);
+                      onClick={async () => {
+                        // Allow clicks during Schließzeit if it does not affect scheduling
+                        if (isReorderMode) return;
+                        if (vacation && vacationBlocksScheduling) return;
+                        if (copyBuffer) {
+                          await handleCopyExistingShift(copyBuffer, employee.id, day);
+                          setCopyBuffer(null);
+                          return;
                         }
+                        handleCellClick(employee.id, day);
                       }}
                     >
                       <Box sx={{ minHeight: 60 }}>
                         {vacation && (
-                          <Card 
-                            sx={{ 
-                              mb: 0.5, 
+                          <Card
+                            sx={{
+                              mb: 0.5,
                               backgroundColor: 'warning.main',
                               color: 'white',
                               textAlign: 'center'
                             }}
                           >
-                            <CardContent sx={{ p: 0.5, '&:last-child': { pb: 0.5 } }}>
-                              <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
-                                🏖️ SCHLIESSZEIT
-                              </Typography>
-                              <Typography variant="caption" display="block" sx={{ fontSize: '0.6rem' }}>
-                                {vacation.name}
+                            <CardContent sx={{ p: 0.25, '&:last-child': { pb: 0.25 } }}>
+                              <Typography variant="caption" sx={{ fontWeight: 'bold', letterSpacing: 0.5 }}>
+                                SCHLIESSZEIT
                               </Typography>
                             </CardContent>
                           </Card>
                         )}
                         
-                        {!vacation && employeeShifts.map((shift: any) => (
+                        {employeeShifts.map((shift: any) => (
                           // Tooltip with detailed time info
                           <Tooltip
                             key={`tt-${shift.id}`}
                             title={(() => {
-                              const isAbs = (shift.shiftTypeCategory || shift.category) === 'absence';
-                              const nonCounting = shift.shiftTypeCountsTowardHours === false;
-                              const s = parseTimeToMinutes(shift.startTime || shift.start_time);
-                              const e = parseTimeToMinutes(shift.endTime || shift.end_time);
-                              const gross = Math.max(0, e - s);
+                              const linkedType = shiftTypes.find((st: any) => st.id?.toString?.() === (shift.shiftTypeId || shift.shift_type_id)?.toString?.());
+                              const isAllDay = (shift.shiftTypeIsAllDay === true) || (linkedType?.isAllDay === true);
+                              const isAbs = (shift.shiftTypeCategory || shift.category) === 'absence' || linkedType?.category === 'absence' || isAllDay;
+                              const nonCounting = (shift.shiftTypeCountsTowardHours === false) || isAbs || isAllDay || (linkedType?.countsTowardHours === false);
+                              const sStr = shift.startTime || shift.start_time;
+                              const eStr = shift.endTime || shift.end_time;
+                              const gross = durationWithMidnight(sStr, eStr);
                               const net = applyBreaks(gross);
                               const grossStr = minutesToHM(gross);
                               const netStr = minutesToHM(net);
                               const breakMin = Math.max(0, gross - net);
-                              const isAllDay = !!shift.shiftTypeIsAllDay;
-                              if (isAbs) return `${shift.shiftTypeName || 'Abwesenheit'} (ganztägig, zählt nicht)`;
+                              if (isAbs) {
+                                // Urlaub/Krankheit: nie "zählt nicht" anzeigen; ganztägig reicht
+                                const name = shift.shiftTypeName || 'Abwesenheit';
+                                return `${name} (ganztägig)`;
+                              }
                               const base = isAllDay
                                 ? `${shift.shiftTypeName || 'Schicht'} (ganztägig)`
-                                : `${shift.shiftTypeName || 'Schicht'} ${shift.startTime || ''} - ${shift.endTime || ''}`;
+                                : `${shift.shiftTypeName || 'Schicht'} ${sStr || ''} - ${endDisplayWithMidnight(sStr, eStr)}`;
                               if (nonCounting) return `${base} · zählt nicht zur Arbeitszeit`;
                               if (isAllDay) return base; // no times/details for all-day
                               return `${base}\nBrutto: ${grossStr} · Pause: ${breakMin} Min · Netto: ${netStr}`;
                             })()}
                             arrow
                             placement="top"
+                            slotProps={{
+                              tooltip: {
+                                sx: (theme: Theme) => ({
+                                  ...(theme.palette.mode === 'dark' && {
+                                    color: 'black',
+                                    backgroundColor: 'rgba(255,255,255,0.95)'
+                                  })
+                                })
+                              },
+                              arrow: {
+                                sx: (theme: Theme) => ({
+                                  ...(theme.palette.mode === 'dark' && {
+                                    color: 'rgba(255,255,255,0.95)'
+                                  })
+                                })
+                              }
+                            }}
                           >
                           <Card 
                             key={shift.id}
-                            sx={{ 
+                            elevation={0}
+                            sx={(theme: Theme) => ({ 
                               mb: 0.5, 
                               cursor: 'grab',
                               minHeight: 24,
                               position: 'relative',
                               width: '100%',
                               boxSizing: 'border-box',
+                              backgroundColor: shift.shiftTypeColor || '#ccc',
+                              color: theme.palette.getContrastText(shift.shiftTypeColor || '#ccc'),
+                              borderRadius: 8,
+                              border: '2px solid transparent',
+                              boxShadow: 'none',
+                              backgroundImage: 'none',
+                              transition: 'none',
+                              transform: 'none',
                               '&:hover': { 
-                                bgcolor: (theme) => theme.palette.mode === 'dark' 
-                                  ? 'rgba(255,255,255,0.06)'
-                                  : 'action.selected',
-                                boxShadow: (theme) => theme.palette.mode === 'dark'
-                                  ? '0 6px 16px rgba(0,0,0,0.5)'
-                                  : '0 6px 16px rgba(0,0,0,0.2)',
-                                outline: (theme) => theme.palette.mode === 'dark' 
-                                  ? '2px solid rgba(255,255,255,0.18)'
-                                  : '2px solid rgba(0,0,0,0.12)',
-                                outlineOffset: 0,
-                                '& .delete-button': { display: 'block' }
+                                backgroundColor: shift.shiftTypeColor || '#ccc',
+                                backgroundImage: 'none',
+                                borderColor: '#ffffff',
+                                boxShadow: 'none',
+                                transform: 'none',
+                                transition: 'none',
+                                '& .delete-button': { display: 'flex' }
                               }
-                            }}
+                            })}
                             draggable
                             onDragStart={(e) => {
-                              e.dataTransfer.setData('existingShift', JSON.stringify({ id: shift.id }));
+                              // Hold Ctrl to copy instead of move
+                              const payload = JSON.stringify({ id: shift.id });
+                              if ((e.ctrlKey || e.metaKey)) {
+                                e.dataTransfer.setData('copyShift', payload);
+                              } else {
+                                e.dataTransfer.setData('existingShift', payload);
+                              }
                             }}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleEditShift(shift);
                             }}
                           >
-                            <CardContent sx={{ p: 0.5, '&:last-child': { pb: 0.5 } }}>
-                              <Chip 
-                                label={(() => {
-                                  const isAbs = shift.shiftTypeCategory === 'absence';
+                            <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
+                              {(() => {
+                                  const linkedType = shiftTypes.find((st: any) => st.id?.toString?.() === (shift.shiftTypeId || shift.shift_type_id)?.toString?.());
+                                  const isAbs = shift.shiftTypeCategory === 'absence' || linkedType?.category === 'absence';
                                   if (isAbs) return `🏖️ ${shift.shiftTypeName || 'Abwesenheit'}`;
-                                  const isAllDay = !!shift.shiftTypeIsAllDay;
+                                  const isAllDay = !!shift.shiftTypeIsAllDay || linkedType?.isAllDay === true;
                                   const name = shift.shiftTypeName || 'Schicht';
                                   const startStr = shift.startTime || '';
-                                  const endStr = shift.endTime || '';
-                                  const s = parseTimeToMinutes(startStr);
-                                  const e = parseTimeToMinutes(endStr);
-                                  const gross = e > s ? (e - s) : 0;
+                                  const endStrRaw = shift.endTime || '';
+                                  const gross = durationWithMidnight(startStr, endStrRaw);
                                   const net = applyBreaks(gross);
                                   const breakMin = Math.max(0, gross - net);
+                                  const endStr = endDisplayWithMidnight(startStr, endStrRaw);
                                   const hasTimes = !!startStr && !!endStr && gross > 0;
 
                                   if (isAllDay) {
-                                    // Nur Name (und Hinweis, wenn nicht zählend)
-                                    const title = `${name}${shift.shiftTypeCountsTowardHours === false ? ' · zählt nicht' : ''} · ganztägig`;
+                                    // Nur Name anzeigen; Details (ganztägig, zählt nicht) bleiben im Tooltip
                                     return (
-                                      <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                                        <span>{title}</span>
+                                      <Box sx={{ display: 'flex', flexDirection: 'column', fontWeight: 700, fontSize: '0.85rem', lineHeight: 1.1 }}>
+                                        <span style={{ fontWeight: 700 }}>{name}</span>
                                       </Box>
                                     );
                                   }
 
                                   // Drei Zeilen: Name, Zeiten, Pause
                                   return (
-                                    <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                                      <span>
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', fontSize: '0.8rem', fontWeight: 700, lineHeight: 1.1 }}>
+                                      <span style={{ fontWeight: 700 }}>
                                         {name}
-                                        {shift.shiftTypeCountsTowardHours === false ? ' · zählt nicht' : ''}
+                                        {((shift.shiftTypeCountsTowardHours === false) || (linkedType?.countsTowardHours === false)) && !isAllDay && !isAbs ? ' · zählt nicht' : ''}
                                       </span>
                                       {hasTimes && (
-                                        <span style={{ fontSize: '0.78em', opacity: 0.95 }}>
+                                        <span style={{ fontSize: '0.7em', opacity: 0.95 }}>
                                           {startStr} - {endStr}
                                         </span>
                                       )}
                                       {hasTimes && (
-                                        <span style={{ fontSize: '0.72em', opacity: 0.95 }}>
+                                        <span style={{ fontSize: '0.65em', opacity: 0.95 }}>
                                           Pause: {breakMin} Min
                                         </span>
                                       )}
                                     </Box>
                                   );
-                                })()} 
-                                size="small" 
-                                sx={(theme) => ({ 
-                                  bgcolor: shift.shiftTypeColor || '#ccc',
-                                  color: theme.palette.getContrastText(shift.shiftTypeColor || '#ccc'),
-                                  fontSize: '0.7rem',
-                                  height: 'auto',
-                                  minHeight: 24,
-                                  width: '100%',
-                                  fontWeight: 700,
-                                  // Make colored area bigger by reducing the border on absence chips
-                                  border: shift.shiftTypeCategory === 'absence' ? '1px solid rgba(255,255,255,0.9)' : 'none',
-                                  boxShadow: shift.shiftTypeCategory === 'absence' ? '0 2px 8px rgba(0,0,0,0.3)' : 'none',
-                                  transition: 'box-shadow 0.2s ease, filter 0.2s ease',
-                                  ...(theme.palette.mode === 'dark' && {
-                                    filter: 'saturate(1.05)',
-                                  }),
-                                  '& .MuiChip-label': {
-                                    // Padding and wrapping to support two-line labels
-                                    padding: '4px 8px',
-                                    lineHeight: 1.2,
-                                    whiteSpace: 'normal',
-                                    overflow: 'visible',
-                                    textOverflow: 'clip',
-                                    width: '100%',
-                                    display: 'block',
-                                  }
-                                })}
-                              />
-                              {/* Delete Button - jetzt für alle Schichten (inkl. Abwesenheiten) */}
+                                })()}
+                              {/* Copy + Delete Buttons */}
+                              <IconButton
+                                className="delete-button"
+                                size="small"
+                                sx={{
+                                  position: 'absolute',
+                                  top: 2,
+                                  right: 28,
+                                  width: 22,
+                                  height: 22,
+                                  display: 'none',
+                                  bgcolor: 'primary.main',
+                                  color: 'white',
+                                  '&:hover': { bgcolor: 'primary.dark' },
+                                  minWidth: 'unset',
+                                  borderRadius: '50%',
+                                  p: 0,
+                                  alignItems: 'center',
+                                  justifyContent: 'center'
+                                }}
+                                title="Schicht kopieren (Strg+Ziehen geht auch)"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCopyBuffer(shift);
+                                  setSnackbar({ open: true, message: 'Kopiermodus aktiv: Klicken Sie nun in eine Zielzelle', severity: 'success' });
+                                }}
+                              >
+                                <CopyIcon sx={{ fontSize: 14, lineHeight: 1 }} />
+                              </IconButton>
                               <IconButton
                                 className="delete-button"
                                 size="small"
@@ -1025,7 +1467,6 @@ const WeekView: React.FC = () => {
                                   minWidth: 'unset',
                                   borderRadius: '50%',
                                   p: 0,
-                                  displayFlex: 'flex',
                                   alignItems: 'center',
                                   justifyContent: 'center'
                                 }}
@@ -1070,7 +1511,7 @@ const WeekView: React.FC = () => {
                           size="small" 
                           label={`Δ ${diffStr}`} 
                           variant="filled"
-                          sx={(theme) => {
+                          sx={(theme: Theme) => {
                             const bg = diff > 0
                               ? theme.palette.error.main
                               : (diff < 0 ? theme.palette.warning.main : theme.palette.success.main);
@@ -1146,6 +1587,64 @@ const WeekView: React.FC = () => {
                 fullWidth
                 required
               />
+              {/* Arbeitszeit-/Pausen-Info / Ganztägig-Hinweis */}
+              {(() => {
+                // Determine linked shift type to know all-day/absence and counting
+                const linkedType = shiftTypes.find((st: any) => st.id?.toString?.() === (editShiftDialog.shift.shiftTypeId || editShiftDialog.shift.shift_type_id)?.toString?.());
+                const isAbs = (editShiftDialog.shift.shiftTypeCategory === 'absence') || linkedType?.category === 'absence';
+                const isAllDay = !!editShiftDialog.shift.shiftTypeIsAllDay || linkedType?.isAllDay === true || isAbs;
+
+                // Planned daily target minutes
+                let targetMin: number | null = null;
+                try {
+                  const empId = (editShiftDialog.shift.employeeId || editShiftDialog.shift.employee_id)?.toString?.();
+                  const emp = employees.find((x: any) => x.id?.toString?.() === empId);
+                  const dateStr = editShiftDialog.shift.date;
+                  if (emp && emp.dailyHoursPlan && dateStr) {
+                    const d = new Date(dateStr);
+                    const dow = d.getDay();
+                    const key = (['sun','mon','tue','wed','thu','fri','sat'] as const)[dow];
+                    const hours = emp.dailyHoursPlan[key as keyof typeof emp.dailyHoursPlan];
+                    if (typeof hours === 'number' && isFinite(hours)) targetMin = Math.round(hours * 60);
+                  }
+                } catch {}
+
+                // Determine counting per live type config (fallback to shift snapshot)
+                let countsToward: boolean = true;
+                if (typeof linkedType?.countsTowardHours === 'boolean') countsToward = linkedType.countsTowardHours as boolean;
+                else if (editShiftDialog.shift.shiftTypeCountsTowardHours === false) countsToward = false;
+
+                if (isAllDay) {
+                  return (
+                    <Alert severity="info" variant="outlined" sx={{ py: 0.5 }}>
+                      <Typography variant="body2">
+                        Ganztägig{isAbs ? '' : ''} • {countsToward ? 'zählt zur Arbeitszeit' : 'zählt nicht zur Arbeitszeit'}
+                        {countsToward && targetMin != null && (
+                          <> • Soll: {minutesToHM(targetMin)}</>
+                        )}
+                      </Typography>
+                    </Alert>
+                  );
+                }
+
+                // Non-all-day: show classic gross/pause/net and delta
+                const s = editShiftDialog.shift.startTime || '09:00';
+                const e = editShiftDialog.shift.endTime || '17:00';
+                const total = durationWithMidnight(s, e);
+                const net = applyBreaks(total);
+                const pause = Math.max(0, total - net);
+                const deltaStr = targetMin != null ? minutesToHM(net - targetMin) : null;
+                return (
+                  <Alert severity="info" variant="outlined" sx={{ py: 0.5 }}>
+                    <Typography variant="body2">
+                      Brutto: {minutesToHM(total)} • Pause: {minutesToHM(pause)} • Netto: <strong>{minutesToHM(net)}</strong>
+                      {targetMin != null && (
+                        <> • Soll: {minutesToHM(targetMin)} • Δ {deltaStr}</>
+                      )}
+                    </Typography>
+                  </Alert>
+                );
+              })()}
               <TextField
                 label="Notizen"
                 value={editShiftDialog.shift.notes || ''}
@@ -1316,6 +1815,139 @@ const WeekView: React.FC = () => {
             color="warning"
           >
             Überschreiben
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Flexible Shift Time Dialog */}
+      <Dialog
+        open={flexDialog.open}
+        onClose={() => setFlexDialog(prev => ({ ...prev, open: false }))}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Zeiten für flexible Schicht festlegen</DialogTitle>
+        <DialogContent>
+          <Box sx={{ pt: 1, display: 'flex', gap: 2 }}>
+            <TextField
+              fullWidth
+              label="Startzeit"
+              type="time"
+              value={flexDialog.startTime}
+              onChange={(e) => setFlexDialog(prev => ({ ...prev, startTime: e.target.value }))}
+              InputLabelProps={{ shrink: true }}
+            />
+            <TextField
+              fullWidth
+              label="Endzeit"
+              type="time"
+              value={flexDialog.endTime}
+              onChange={(e) => setFlexDialog(prev => ({ ...prev, endTime: e.target.value }))}
+              InputLabelProps={{ shrink: true }}
+            />
+          </Box>
+          {/* Arbeitszeit-/Pausen-Info für flexible Schicht */}
+          {(() => {
+            const s = flexDialog.startTime || '09:00';
+            const e = flexDialog.endTime || '17:00';
+            const total = durationWithMidnight(s, e);
+            const net = applyBreaks(total);
+            const pause = Math.max(0, total - net);
+            // Soll (täglicher Plan) ermitteln
+            let targetMin: number | null = null;
+            try {
+              if (flexDialog.employeeId && flexDialog.date) {
+                const emp = employees.find((x: any) => x.id?.toString?.() === flexDialog.employeeId?.toString?.());
+                const d = new Date(flexDialog.date);
+                const dow = d.getDay();
+                const key = (['sun','mon','tue','wed','thu','fri','sat'] as const)[dow];
+                const hours = emp?.dailyHoursPlan?.[key];
+                if (typeof hours === 'number' && isFinite(hours)) {
+                  targetMin = Math.round(hours * 60);
+                }
+              }
+            } catch {}
+            const deltaStr = targetMin != null ? minutesToHM(net - targetMin) : null;
+            return (
+              <Alert severity="info" variant="outlined" sx={{ mt: 2, py: 0.5 }}>
+                <Typography variant="body2">
+                  Brutto: {minutesToHM(total)} • Pause: {minutesToHM(pause)} • Netto: <strong>{minutesToHM(net)}</strong>
+                  {targetMin != null && (
+                    <> • Soll: {minutesToHM(targetMin)} • Δ {deltaStr}</>
+                  )}
+                </Typography>
+              </Alert>
+            );
+          })()}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setFlexDialog(prev => ({ ...prev, open: false }))}>Abbrechen</Button>
+          <Button
+            variant="contained"
+            onClick={async () => {
+              if (!flexDialog.employeeId || !flexDialog.date || !flexDialog.shiftType) {
+                setFlexDialog(prev => ({ ...prev, open: false }));
+                return;
+              }
+              const s = flexDialog.startTime || '09:00';
+              const e = flexDialog.endTime || '17:00';
+              // Basic validation HH:mm
+              const valid = /^\d{1,2}:\d{2}$/.test(s) && /^\d{1,2}:\d{2}$/.test(e);
+              if (!valid) {
+                setSnackbar({ open: true, message: 'Bitte gültige Zeiten eingeben (HH:MM).', severity: 'error' });
+                return;
+              }
+              const [sh, sm] = s.split(':').map(Number);
+              const [eh, em] = e.split(':').map(Number);
+              const startMin = (sh || 0) * 60 + (sm || 0);
+              const endMin = (eh || 0) * 60 + (em || 0);
+              const isMidnightEnd = endMin === 0 && startMin > 0;
+              if (!isMidnightEnd && endMin <= startMin) {
+                setSnackbar({ open: true, message: 'Endzeit muss nach Startzeit liegen (00:00 gilt als 24:00).', severity: 'error' });
+                return;
+              }
+
+              const shiftData = {
+                shiftTypeId: flexDialog.shiftType.id,
+                employeeId: flexDialog.employeeId.toString(),
+                date: flexDialog.date,
+                startTime: s,
+                endTime: e, // store as 00:00; calculations treat as 24:00 when start > 0
+                notes: `${flexDialog.shiftType.name} Schicht`,
+                organizationUnitId: String(selectedOrganization?.id ?? (employees.find((e:any)=> e.id?.toString?.()===flexDialog.employeeId?.toString?.()) as any)?.organizationId ?? '')
+              };
+              if (!shiftData.organizationUnitId) {
+                setSnackbar({ open: true, message: 'Keine Organisation ausgewählt – bitte Organisation wählen.', severity: 'error' });
+                return;
+              }
+
+              const conflictCheck = checkShiftConflicts(shiftData);
+              if (conflictCheck.hasConflict && !conflictCheck.canOverride) {
+                setSnackbar({ open: true, message: conflictCheck.conflicts[0].message, severity: 'error' });
+                return;
+              }
+
+              if (conflictCheck.hasConflict && conflictCheck.canOverride) {
+                setConflictDialog({
+                  open: true,
+                  newShift: shiftData,
+                  existingShifts: conflictCheck.conflicts.map(c => c.existing),
+                  message: conflictCheck.conflicts[0].message
+                });
+                setFlexDialog(prev => ({ ...prev, open: false }));
+                return;
+              }
+
+              try {
+                await createShiftWithData(shiftData);
+                setFlexDialog(prev => ({ ...prev, open: false }));
+              } catch (err) {
+                console.error('Fehler beim Erstellen flexibler Schicht:', err);
+                setSnackbar({ open: true, message: 'Fehler beim Erstellen der Schicht', severity: 'error' });
+              }
+            }}
+          >
+            Speichern
           </Button>
         </DialogActions>
       </Dialog>

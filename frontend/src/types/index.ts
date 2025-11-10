@@ -19,6 +19,16 @@ export interface Employee {
   updatedAt: string;
   // Optional: Wochenarbeitszeit (in Stunden, z.B. 38.5)
   weeklyHours?: number;
+  // Optional: Geplante Tagesarbeitszeit (netto, Stunden) pro Wochentag
+  dailyHoursPlan?: {
+    mon?: number;
+    tue?: number;
+    wed?: number;
+    thu?: number;
+    fri?: number;
+    sat?: number;
+    sun?: number;
+  };
   // Optional: Interne Notizen zum Mitarbeiter
   notes?: string;
 }

@@ -25,9 +25,12 @@ import {
   People as PeopleIcon,
   Work as WorkIcon,
   Settings as SettingsIcon,
-  CheckCircle as CheckIcon
+  CheckCircle as CheckIcon,
+  AccessTime as AccessTimeIcon,
+  QueryStats as QueryStatsIcon
 } from '@mui/icons-material';
 import { TransitionProps } from '@mui/material/transitions';
+import { useNavigate } from 'react-router-dom';
 
 const Transition = React.forwardRef(function Transition(
   props: TransitionProps & {
@@ -64,6 +67,19 @@ const tutorialSteps: TutorialStep[] = [
     target: '[href="/week"]'
   },
   {
+    title: "Arbeitszeiten je Tag ⏱️",
+    content: "In der Wochenansicht werden Brutto-, Pausen- und Nettozeiten pro Schicht berücksichtigt. Im Tooltip einer Schicht sehen Sie die genaue Aufschlüsselung.",
+    icon: <AccessTimeIcon sx={{ fontSize: 48, color: 'info.main' }} />,
+    // Wochenansicht ist die passende Ansicht
+    target: '[href="/week"]'
+  },
+  {
+    title: "Wochenstunden & Differenz 📈",
+    content: "Rechts in der Wochenansicht sehen Sie die Wochenstunden je Mitarbeiter und eine farbige Differenz (Δ) zum Soll. Rot = Überzeit, Gelb = Unterzeit, Grün = im Plan.",
+    icon: <QueryStatsIcon sx={{ fontSize: 48, color: 'success.main' }} />,
+    target: '[href="/week"]'
+  },
+  {
     title: "Mitarbeiter 👥",
     content: "Verwalten Sie hier alle Mitarbeiter Ihrer Organisation. Sie können neue Mitarbeiter hinzufügen, bestehende bearbeiten und deren Informationen einsehen.",
     icon: <PeopleIcon sx={{ fontSize: 48, color: 'secondary.main' }} />,
@@ -97,22 +113,44 @@ interface TutorialProps {
 const Tutorial: React.FC<TutorialProps> = ({ open, onClose, onComplete }) => {
   const [activeStep, setActiveStep] = useState(0);
   const theme = useTheme();
+  const navigate = useNavigate();
 
-  // Highlight target element
+  // Navigate to relevant route on step change and then highlight target
   useEffect(() => {
-    if (open && tutorialSteps[activeStep].target) {
-      const targetElement = document.querySelector(tutorialSteps[activeStep].target!);
-      if (targetElement) {
-        // Add highlighting
-        targetElement.classList.add('tutorial-highlight');
-        
-        // Remove highlighting when step changes or tutorial closes
-        return () => {
-          targetElement.classList.remove('tutorial-highlight');
-        };
-      }
+    if (!open) return;
+    const step = tutorialSteps[activeStep];
+    let path: string | null = null;
+    if (step.target) {
+      const match = step.target.match(/\[href=\"([^\"]+)\"\]/);
+      if (match) path = match[1];
     }
-  }, [activeStep, open]);
+
+    // Default routing for certain step titles
+    if (!path) {
+      if (/Wochenansicht|Arbeitszeiten|Wochenstunden/i.test(step.title)) path = '/week';
+      if (/Dashboard/i.test(step.title)) path = '/dashboard';
+      if (/Mitarbeiter/i.test(step.title)) path = '/employees';
+      if (/Schichttypen/i.test(step.title)) path = '/shift-types';
+      if (/Einstellungen/i.test(step.title)) path = '/admin';
+    }
+
+    if (path) {
+      navigate(path, { replace: false });
+    }
+
+    // Slight delay to allow DOM to render before highlighting
+    const timer = setTimeout(() => {
+      if (step.target) {
+        const el = document.querySelector(step.target!);
+        if (el) el.classList.add('tutorial-highlight');
+      }
+    }, 200);
+
+    return () => {
+      clearTimeout(timer);
+      document.querySelectorAll('.tutorial-highlight').forEach(el => el.classList.remove('tutorial-highlight'));
+    };
+  }, [activeStep, open, navigate]);
 
   // Add CSS for highlighting
   useEffect(() => {
@@ -181,7 +219,15 @@ const Tutorial: React.FC<TutorialProps> = ({ open, onClose, onComplete }) => {
       PaperProps={{
         sx: {
           borderRadius: 2,
-          background: `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.05)} 0%, ${alpha(theme.palette.secondary.main, 0.05)} 100%)`
+          // In Light Mode klare Lesbarkeit: weniger Transparenz, heller Hintergrund
+          background: theme.palette.mode === 'light'
+            ? theme.palette.background.paper
+            : `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.05)} 0%, ${alpha(theme.palette.secondary.main, 0.05)} 100%)`
+        }
+      }}
+      BackdropProps={{
+        sx: {
+          backgroundColor: theme.palette.mode === 'light' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.6)'
         }
       }}
     >
@@ -217,8 +263,11 @@ const Tutorial: React.FC<TutorialProps> = ({ open, onClose, onComplete }) => {
           elevation={0} 
           sx={{ 
             p: 3, 
-            backgroundColor: alpha(theme.palette.background.paper, 0.7),
-            border: `1px solid ${alpha(theme.palette.divider, 0.1)}`,
+            // In Light Mode opak für bessere Lesbarkeit; in Dark leicht transparent
+            backgroundColor: theme.palette.mode === 'light' 
+              ? theme.palette.background.paper 
+              : alpha(theme.palette.background.paper, 0.85),
+            border: `1px solid ${alpha(theme.palette.divider, theme.palette.mode === 'light' ? 0.2 : 0.1)}`,
             borderRadius: 2
           }}
         >

@@ -41,7 +41,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   importBackupFromData: (data) => ipcRenderer.invoke('db:importBackupFromData', data),
 
   // Holiday operations
-  getHolidays: (filters) => ipcRenderer.invoke('holidays:getAll', filters),
+  getHolidays: (filters) => ipcRenderer.invoke('holidays:get', filters),
   loadHolidaysFromAPI: (state, fromYear, toYear) => ipcRenderer.invoke('holidays:loadFromAPI', state, fromYear, toYear),
   getHolidayCacheInfo: (state) => ipcRenderer.invoke('holidays:getCacheInfo', state),
   clearHolidayCache: (state, year) => ipcRenderer.invoke('holidays:clearCache', state, year),

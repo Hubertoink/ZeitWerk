@@ -3,16 +3,20 @@ import { WeekViewData } from '../../types';
 
 interface CalendarState {
   currentView: 'week' | 'month';
-  currentDate: string; // ISO string instead of Date
+  weekDate: string; // ISO string representing the focused week start
+  monthDate: string; // ISO string representing the focused month
   weekData: WeekViewData | null;
   selectedDate: string | null; // ISO string instead of Date
   isLoading: boolean;
   error: string | null;
 }
 
+const initialDateIso = new Date().toISOString();
+
 const initialState: CalendarState = {
   currentView: 'week',
-  currentDate: new Date().toISOString(),
+  weekDate: initialDateIso,
+  monthDate: initialDateIso,
   weekData: null,
   selectedDate: null,
   isLoading: false,
@@ -26,8 +30,13 @@ const calendarSlice = createSlice({
     setCurrentView: (state, action: PayloadAction<'week' | 'month'>) => {
       state.currentView = action.payload;
     },
-    setCurrentDate: (state, action: PayloadAction<string>) => {
-      state.currentDate = action.payload;
+    setWeekDate: (state, action: PayloadAction<string>) => {
+      state.weekDate = action.payload;
+      state.monthDate = action.payload;
+      state.selectedDate = action.payload;
+    },
+    setMonthDate: (state, action: PayloadAction<string>) => {
+      state.monthDate = action.payload;
     },
     setWeekData: (state, action: PayloadAction<WeekViewData>) => {
       state.weekData = action.payload;
@@ -37,15 +46,18 @@ const calendarSlice = createSlice({
     },
     navigateWeek: (state, action: PayloadAction<'prev' | 'next'>) => {
       const direction = action.payload === 'next' ? 1 : -1;
-      const currentDate = new Date(state.currentDate);
+      const currentDate = new Date(state.weekDate);
       currentDate.setDate(currentDate.getDate() + (7 * direction));
-      state.currentDate = currentDate.toISOString();
+      const nextWeekIso = currentDate.toISOString();
+      state.weekDate = nextWeekIso;
+      state.monthDate = nextWeekIso;
+      state.selectedDate = nextWeekIso;
     },
     navigateMonth: (state, action: PayloadAction<'prev' | 'next'>) => {
       const direction = action.payload === 'next' ? 1 : -1;
-      const currentDate = new Date(state.currentDate);
+      const currentDate = new Date(state.monthDate);
       currentDate.setMonth(currentDate.getMonth() + direction);
-      state.currentDate = currentDate.toISOString();
+      state.monthDate = currentDate.toISOString();
     },
     setLoading: (state, action: PayloadAction<boolean>) => {
       state.isLoading = action.payload;
@@ -58,7 +70,8 @@ const calendarSlice = createSlice({
 
 export const {
   setCurrentView,
-  setCurrentDate,
+  setWeekDate,
+  setMonthDate,
   setWeekData,
   setSelectedDate,
   navigateWeek,

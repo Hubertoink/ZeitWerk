@@ -99,11 +99,7 @@ class DienstplanApp {
         if (isDev) {
             // Load localhost with explicit base path
             this.mainWindow.loadURL('http://localhost:3000/');
-            
-            // Wait for page to load before opening dev tools
-            this.mainWindow.webContents.once('did-finish-load', () => {
-                this.mainWindow.webContents.openDevTools();
-            });
+            // Do NOT auto-open DevTools in dev; user can open manually (Ctrl+Shift+I)
         } else {
             this.mainWindow.loadFile(path.join(__dirname, '../frontend/dist/index.html'));
             // Remove menu bar entirely in production
@@ -116,10 +112,7 @@ class DienstplanApp {
         // Window Events
         this.mainWindow.once('ready-to-show', () => {
             this.mainWindow.show();
-            if (isDev) {
-                // Open dev tools only in development
-                this.mainWindow.webContents.openDevTools();
-            }
+            // Do not auto-open DevTools; keep manual access via keyboard/menu
         });
 
         this.mainWindow.on('closed', () => {
@@ -398,6 +391,25 @@ class DienstplanApp {
             return this.db.getStats();
         });
 
+        // Shift years stats for cleanup UI
+        ipcMain.handle('db:getShiftYears', async () => {
+            try {
+                return this.db.getShiftYears();
+            } catch (e) {
+                return [];
+            }
+        });
+
+        // Purge shifts for a specific year
+        ipcMain.handle('db:purgeShiftsByYear', async (_evt, year) => {
+            try {
+                const deleted = this.db.purgeShiftsByYear(year);
+                return { success: true, deleted };
+            } catch (e) {
+                return { success: false, error: e.message, deleted: 0 };
+            }
+        });
+
         ipcMain.handle('db:backup', async () => {
             return this.db.createBackup();
         });
@@ -581,6 +593,68 @@ class DienstplanApp {
             return res.success ? next : { ...next, error: res.message };
         });
 
+        // Export folder management
+        const ensureDir = async (dirPath) => {
+            if (!dirPath) return false;
+            try {
+                await fsp.mkdir(dirPath, { recursive: true });
+                return true;
+            } catch (e) {
+                console.warn('ensureDir failed:', e.message);
+                return false;
+            }
+        };
+
+        ipcMain.handle('exportFolder:get', async () => {
+            const s = await readAppSettings();
+            return s?.exportFolder || null;
+        });
+
+        ipcMain.handle('exportFolder:set', async (_evt, folderPath) => {
+            try {
+                if (!folderPath || typeof folderPath !== 'string') {
+                    return { success: false, error: 'Ungültiger Pfad' };
+                }
+                const ok = await ensureDir(folderPath);
+                if (!ok) return { success: false, error: 'Pfad kann nicht erstellt werden' };
+                const current = await readAppSettings();
+                const next = { ...current, exportFolder: folderPath };
+                const res = await writeAppSettings(next);
+                return res.success ? { success: true, path: folderPath } : { success: false, error: res.message };
+            } catch (e) {
+                return { success: false, error: e.message };
+            }
+        });
+
+        ipcMain.handle('exportFolder:clear', async () => {
+            try {
+                const current = await readAppSettings();
+                const next = { ...current };
+                delete next.exportFolder;
+                const res = await writeAppSettings(next);
+                return res.success ? { success: true } : { success: false, error: res.message };
+            } catch (e) {
+                return { success: false, error: e.message };
+            }
+        });
+
+        ipcMain.handle('fs:writeExportFile', async (_evt, fileName, content, options = {}) => {
+            try {
+                if (!fileName) throw new Error('fileName is required');
+                const s = await readAppSettings();
+                const baseDir = s?.exportFolder;
+                if (!baseDir) return { success: false, error: 'Kein Exportordner gesetzt' };
+                await ensureDir(baseDir);
+                const fullPath = path.join(baseDir, fileName);
+                const encoding = options.base64 ? 'base64' : (options.encoding || 'utf8');
+                await fsp.writeFile(fullPath, content, { encoding });
+                return { success: true, path: fullPath };
+            } catch (e) {
+                console.error('fs:writeExportFile failed', e);
+                return { success: false, error: e.message };
+            }
+        });
+
         ipcMain.handle('app:relaunch', async () => {
             try {
                 // Ensure windows are closed to avoid lingering state
@@ -670,12 +744,19 @@ class DienstplanApp {
     }
     
     // Insert after registering existing handlers
-    // Add holidays IPC handlers (basic, serverless)
+    // Add holidays IPC handlers (serverless JSON-DB mode)
     registerHolidayIpcHandlers() {
-        // Basic holiday provider using fallback calculation to avoid renderer warnings
-        ipcMain.handle('holidays:get', async (event, filters = {}) => {
+        // Prefer cached holidays from DB; fall back to basic calculation
+        const handleGetHolidays = async (_event, filters = {}) => {
             try {
-                const { startDate, endDate, state } = filters || {};
+                const normalizedState = filters.state ? String(filters.state).toUpperCase() : null;
+                const dbFilters = normalizedState ? { ...filters, state: normalizedState } : { ...filters };
+
+                // Load DB-backed holidays (may be empty)
+                const dbResult = await this.db.getHolidays(dbFilters || {});
+
+                // Compute basic holidays for requested range (to ensure consistent display)
+                const { startDate, endDate } = filters || {};
                 const start = startDate ? new Date(startDate) : new Date(new Date().getFullYear(), 0, 1);
                 const end = endDate ? new Date(endDate) : new Date(new Date().getFullYear(), 11, 31);
                 const startYear = start.getFullYear();
@@ -685,14 +766,112 @@ class DienstplanApp {
                     const yearHolidays = holidayUtil.getBasicGermanHolidays(y);
                     all = all.concat(yearHolidays);
                 }
-                const filtered = all.filter(h => {
-                    const d = new Date(h.date);
-                    return d >= start && d <= end;
-                }).map(h => ({ ...h, state: state || h.state }));
-                return filtered;
+                const filtered = all
+                    .filter(h => {
+                        const d = new Date(h.date);
+                        return d >= start && d <= end;
+                    })
+                    // Basic set are nationwide; do not force-set a specific state
+                    .map(h => ({ ...h, state: h.state || null }));
+
+                // Merge DB + basic and dedupe by date+name
+                const mergedMap = new Map();
+                const put = (h) => {
+                    if (!h) return;
+                    // Keep separate entries per state to allow regional holidays to coexist with nationwide ones
+                    const stateKey = h.state ? String(h.state).toUpperCase() : 'NATIONAL';
+                    const key = `${h.date}::${h.name}::${stateKey}`;
+                    if (!mergedMap.has(key)) mergedMap.set(key, h);
+                };
+                (Array.isArray(dbResult) ? dbResult : []).forEach(put);
+                filtered.forEach(put);
+                let merged = Array.from(mergedMap.values()).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                // Optional dedupe: If a specific state is requested, collapse duplicates (same date+name)
+                // preferring nationwide entries over state-specific. This avoids double entries
+                // when a holiday is both nationwide and regionally recorded.
+                if (normalizedState && normalizedState !== 'ALL') {
+                    const pickMap = new Map();
+                    for (const h of merged) {
+                        const k = `${h.date}::${h.name}`;
+                        const existing = pickMap.get(k);
+                        if (!existing) {
+                            pickMap.set(k, h);
+                        } else {
+                            const existingIsNational = !existing.state || String(existing.state).toUpperCase() === 'NATIONAL' || String(existing.state).toUpperCase() === 'ALL';
+                            const currentIsNational = !h.state || String(h.state).toUpperCase() === 'NATIONAL' || String(h.state).toUpperCase() === 'ALL';
+                            // Prefer nationwide
+                            if (!existingIsNational && currentIsNational) {
+                                pickMap.set(k, h);
+                            }
+                        }
+                    }
+                    merged = Array.from(pickMap.values()).sort((a, b) => new Date(a.date) - new Date(b.date));
+                }
+
+                return merged;
             } catch (e) {
                 console.warn('⚠️ holidays:get failed in main process:', e.message);
                 return [];
+            }
+        };
+
+        ipcMain.handle('holidays:get', handleGetHolidays);
+        // Legacy alias for older preload scripts
+        ipcMain.handle('holidays:getAll', handleGetHolidays);
+
+        // Load holidays from external API and cache in DB
+        ipcMain.handle('holidays:loadFromAPI', async (_event, state = 'ALL', fromYear, toYear) => {
+            try {
+                const from = parseInt(fromYear, 10);
+                const to = parseInt(toYear, 10);
+                if (!from || !to || from > to) {
+                    return { success: false, error: 'Ungültiger Jahresbereich' };
+                }
+
+                const { holidays, errors, totalCount } = await holidayUtil.loadHolidaysForYearRange(from, to, state || 'ALL');
+
+                // Persist in DB
+                await this.db.insertHolidays(holidays);
+                await this.db.updateHolidayCacheInfo(state || 'ALL', from, to, totalCount);
+
+                return {
+                    success: true,
+                    count: totalCount,
+                    fromYear: from,
+                    toYear: to,
+                    state: state || 'ALL',
+                    errors
+                };
+            } catch (e) {
+                console.error('❌ holidays:loadFromAPI failed:', e);
+                return { success: false, error: e.message };
+            }
+        });
+
+        // Get holiday cache info (single state or all)
+        ipcMain.handle('holidays:getCacheInfo', async (_event, state = null) => {
+            try {
+                if (state) {
+                    return await this.db.getHolidayCacheInfo(state);
+                }
+                return await this.db.getAllHolidayCacheInfo();
+            } catch (e) {
+                console.warn('⚠️ holidays:getCacheInfo failed:', e.message);
+                return state ? null : [];
+            }
+        });
+
+        // Clear holiday cache (state optional, year optional)
+        ipcMain.handle('holidays:clearCache', async (_event, state = null, year = null) => {
+            try {
+                const res = await this.db.clearHolidayCache(state, year);
+                // Also report how many holidays remain
+                const remaining = (await this.db.getHolidays({})).length;
+                return { ...(res || {}), remaining };
+            } catch (e) {
+                console.error('❌ holidays:clearCache failed:', e);
+                return { success: false, message: e.message };
             }
         });
     }

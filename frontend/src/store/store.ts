@@ -20,7 +20,7 @@ export const store = configureStore({
       serializableCheck: {
         ignoredActions: ['persist/PERSIST', 'auth/loginStart', 'auth/loginFailure'],
         ignoredActionsPaths: ['meta.arg', 'payload.timestamp'],
-        ignoredPaths: ['calendar.currentDate'],
+  ignoredPaths: ['calendar.weekDate', 'calendar.monthDate'],
       },
     }),
 });

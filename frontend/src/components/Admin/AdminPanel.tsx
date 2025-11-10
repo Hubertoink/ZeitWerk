@@ -15,7 +15,9 @@ import {
   Snackbar,
   Tabs,
   Tab,
-  Paper
+  Paper,
+  Link,
+  useTheme
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -27,6 +29,7 @@ import {
   CalendarMonth as CalendarIcon
 } from '@mui/icons-material';
 import { apiService } from '../../services/api-service';
+import electronAPI from '../../services/electron-api';
 import { statsService } from '../../services/api';
 import { useAppDispatch } from '../../store/hooks';
 import { fetchShiftTypes } from '../../store/slices/shiftTypeSlice';
@@ -54,9 +57,20 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onDataReset }) => {
     message: string;
     severity: 'success' | 'error' | 'info';
   }>({ open: false, message: '', severity: 'info' });
+  const [appVersion, setAppVersion] = useState<string>('');
+  const theme = useTheme();
 
   React.useEffect(() => {
     loadStats();
+    // Load app version for Info tab
+    (async () => {
+      try {
+        const v = await electronAPI.getAppVersion();
+        setAppVersion(v);
+      } catch {
+        setAppVersion('1.0.0');
+      }
+    })();
   }, []);
 
   const loadStats = async () => {
@@ -335,12 +349,56 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onDataReset }) => {
           <Tab icon={<SettingsIcon />} label="App-Einstellungen" />
           <Tab icon={<StorageIcon />} label="Datenbank-Verwaltung" />
           <Tab icon={<CalendarIcon />} label="Feiertage-Verwaltung" />
+          <Tab icon={<InfoIcon />} label="Info" />
         </Tabs>
 
         <Box sx={{ p: 3 }}>
           {activeTab === 0 && <AdminSettings onSettingsChange={handleSettingsChange} />}
           {activeTab === 1 && renderDataManagement()}
           {activeTab === 2 && <HolidayManagement />}
+          {activeTab === 3 && (
+            <Box>
+              <Typography variant="h5" gutterBottom>
+                <InfoIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                App-Informationen
+              </Typography>
+              <Grid container spacing={3}>
+                <Grid item xs={12} md={10}>
+                  <Card sx={{ width: '100%', maxWidth: { xs: '100%', md: 980 } }}>
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom>
+                        Version & Herausgeber
+                      </Typography>
+                      <Box sx={{ display: 'grid', gridTemplateColumns: '160px minmax(0, 1fr)', columnGap: 2, rowGap: 1 }}>
+                        <Typography color="text.secondary">Version:</Typography>
+                        <Typography>{appVersion || '–'}</Typography>
+                        <Typography color="text.secondary">Herausgeber:</Typography>
+                        <Typography>Nikolas Häfner</Typography>
+                        <Typography color="text.secondary">Feedback:</Typography>
+                        <Typography sx={{ minWidth: 0 }}>
+                          <Link 
+                            href="mailto:nikolas.haefner@mannheim.de" 
+                            underline="hover"
+                            sx={{ 
+                              color: theme.palette.mode === 'dark' ? theme.palette.primary.light : theme.palette.primary.main,
+                              fontWeight: 600,
+                              whiteSpace: 'nowrap',
+                              display: 'inline'
+                            }}
+                          >
+                            nikolas.haefner@mannheim.de
+                          </Link>
+                        </Typography>
+                      </Box>
+                      <Alert severity="info" sx={{ mt: 2 }}>
+                        Vielen Dank für Ihr Feedback – es hilft, ZeitWerk kontinuierlich zu verbessern.
+                      </Alert>
+                    </CardContent>
+                  </Card>
+                </Grid>
+              </Grid>
+            </Box>
+          )}
         </Box>
       </Paper>
 

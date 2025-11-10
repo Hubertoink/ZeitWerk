@@ -9,7 +9,8 @@ import {
   MenuItem,
   DialogActions
 } from '@mui/material';
-import { format } from 'date-fns';
+import { format, differenceInCalendarDays } from 'date-fns';
+import { Alert, Typography } from '@mui/material';
 
 interface BulkCreateShiftFormProps {
   employeeId: number | null;
@@ -173,10 +174,11 @@ const BulkCreateShiftForm: React.FC<BulkCreateShiftFormProps> = ({
     const [startHours, startMinutes] = formData.startTime.split(':').map(Number);
     const [endHours, endMinutes] = formData.endTime.split(':').map(Number);
     const startTimeInMinutes = startHours * 60 + startMinutes;
-    const endTimeInMinutes = endHours * 60 + endMinutes;
-
-    if (endTimeInMinutes <= startTimeInMinutes) {
-      alert('Die Endzeit muss nach der Startzeit liegen.');
+    let endTimeInMinutes = endHours * 60 + endMinutes;
+    const isMidnightEnd = endTimeInMinutes === 0 && startTimeInMinutes > 0;
+    if (isMidnightEnd) endTimeInMinutes = 24 * 60;
+    if (!isMidnightEnd && endTimeInMinutes <= startTimeInMinutes) {
+      alert('Die Endzeit muss nach der Startzeit liegen (00:00 gilt als 24:00).');
       return;
     }
 
@@ -253,6 +255,37 @@ const BulkCreateShiftForm: React.FC<BulkCreateShiftFormProps> = ({
         />
       </Box>
 
+      {/* Arbeitszeit-/Pausen-Info nach TVöD (6h -> 30 Min, >9h -> 45 Min) */}
+      {(() => {
+        const parse = (t?: string) => {
+          if (!t) return 0;
+          const m = t.match(/^(\d{1,2}):(\d{2})$/);
+          if (!m) return 0;
+          return (parseInt(m[1], 10) || 0) * 60 + (parseInt(m[2], 10) || 0);
+        };
+        const s = formData.startTime;
+        const e = formData.endTime;
+        const sMin = parse(s);
+        let eMin = parse(e);
+        if (eMin === 0 && sMin > 0) eMin = 24 * 60; // treat 00:00 as 24:00
+        const total = Math.max(0, eMin - sMin);
+        const applyBreaks = (mins: number) => {
+          if (mins > 9 * 60) return Math.max(0, mins - 45);
+          if (mins >= 6 * 60) return Math.max(0, mins - 30);
+          return mins;
+        };
+        const toHM = (n: number) => `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
+        const net = applyBreaks(total);
+        const pause = Math.max(0, total - net);
+        return (
+          <Alert severity="info" variant="outlined" sx={{ py: 0.5 }}>
+            <Typography variant="body2">
+              Brutto: {toHM(total)} • Pause: {toHM(pause)} • Netto: <strong>{toHM(net)}</strong>
+            </Typography>
+          </Alert>
+        );
+      })()}
+
       <TextField
         label="Notizen"
         value={formData.notes}
@@ -265,9 +298,16 @@ const BulkCreateShiftForm: React.FC<BulkCreateShiftFormProps> = ({
 
       <DialogActions sx={{ px: 0, pb: 0 }}>
         <Button onClick={onCancel}>Abbrechen</Button>
-        <Button onClick={handleSubmit} variant="contained" disabled={!formData.shiftTypeId}>
-          Schichten erstellen
-        </Button>
+        {(() => {
+          const daysDiff = differenceInCalendarDays(new Date(formData.endDate), new Date(formData.startDate));
+          const isMultiDay = daysDiff > 0; // plural only if end date is after start date
+          const label = isMultiDay ? 'Schichten erstellen' : 'Schicht erstellen';
+          return (
+            <Button onClick={handleSubmit} variant="contained" disabled={!formData.shiftTypeId}>
+              {label}
+            </Button>
+          );
+        })()}
       </DialogActions>
     </Box>
   );

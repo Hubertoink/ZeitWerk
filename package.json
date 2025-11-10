@@ -1,6 +1,6 @@
 {
   "name": "zeitwerk-app",
-  "version": "1.3.4",
+  "version": "1.4.10",
   "description": "ZeitWerk - Moderne Dienstplan-App für die Jugendarbeit",
   "main": "electron/main-json.js",
   "homepage": "./",
@@ -60,7 +60,7 @@
       "!**/docs/**",
       "!**/README*"
     ],
-    "artifactName": "${productName} Setup ${version}.${ext}",
+    "artifactName": "${productName} Setup ${version}-x64.${ext}",
     "win": {
       "target": [
         { "target": "nsis", "arch": ["x64"] },
@@ -73,7 +73,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
-      "allowElevation": false,
+      "allowElevation": true,
+      "differentialPackage": false,
       "runAfterFinish": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,

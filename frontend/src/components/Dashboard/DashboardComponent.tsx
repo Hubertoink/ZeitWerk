@@ -48,6 +48,7 @@ import { fetchShiftTypes } from '../../store/slices/shiftTypeSlice';
 import { fetchShifts } from '../../store/slices/shiftSlice';
 import { fetchOrganizations, setSelectedOrganization } from '../../store/slices/organizationSlice';
 import { format, isThisWeek, addDays } from 'date-fns';
+import { saveDashboardExcel, saveWeekExcel, buildWeekExcelFromShifts } from '../../utils/excelExport';
 import { de } from 'date-fns/locale';
 
 const DashboardComponent: React.FC = () => {
@@ -64,7 +65,7 @@ const DashboardComponent: React.FC = () => {
     includeShifts: true,
     includeEmployees: true,
     includeOrganizations: true,
-    format: 'csv' // csv, excel
+    format: 'excel' // csv, excel (default switched to Excel)
   });
   const [snackbar, setSnackbar] = useState<{open: boolean; message: string; severity: 'success' | 'error' | 'info'}>({ open: false, message: '', severity: 'success' });
   
@@ -288,7 +289,9 @@ const DashboardComponent: React.FC = () => {
         organizationId: emp.organizationId || emp.organization_id,
         organizationName: getOrganizationById(emp.organizationId || emp.organization_id)?.name || 'Unbekannt',
         hourlyRate: emp.hourlyRate || emp.hourly_rate || 0,
-        isActive: (emp.isActive !== undefined ? emp.isActive : emp.is_active) ? 'Ja' : 'Nein'
+        isActive: (emp.isActive !== undefined ? emp.isActive : emp.is_active) ? 'Ja' : 'Nein',
+        weeklyHours: (typeof emp.weeklyHours === 'number') ? emp.weeklyHours : (typeof (emp as any).weekly_hours === 'number' ? (emp as any).weekly_hours : undefined),
+        dailyHoursPlan: (emp as any).dailyHoursPlan || undefined
       }));
     }
 
@@ -303,7 +306,10 @@ const DashboardComponent: React.FC = () => {
         isFlexible: (st.isFlexible !== undefined ? st.isFlexible : st.is_flexible) ? 'Ja' : 'Nein',
         color: st.color || '#1976d2',
         colorHex: st.color || '#1976d2', // Für Excel-Formatierung
-        displayTime: (st.isFlexible !== undefined ? st.isFlexible : st.is_flexible) ? 'Flexibel' : `${st.startTime || st.start_time || 'N/A'} - ${st.endTime || st.end_time || 'N/A'}`
+        displayTime: (st.isFlexible !== undefined ? st.isFlexible : st.is_flexible) ? 'Flexibel' : `${st.startTime || st.start_time || 'N/A'} - ${st.endTime || st.end_time || 'N/A'}`,
+        // Zusatzinfos für Export-Berechnung
+        category: st.category, // z.B. 'absence'
+        countsTowardHours: st.countsTowardHours
       }));
     }
 
@@ -325,7 +331,10 @@ const DashboardComponent: React.FC = () => {
           shiftTypeId: shift.shiftTypeId || shift.shift_type_id,
           shiftTypeName: shiftType?.name || 'Unbekannt',
           shiftTypeColor: shiftType?.color || '#1976d2',
+          shiftTypeCategory: (shiftType as any)?.category,
+          shiftTypeCountsTowardHours: (shiftType as any)?.countsTowardHours,
           employeeId: shift.employeeId || shift.employee_id || '',
+          shiftTypeIsAllDay: (shiftType as any)?.isAllDay === true,
           employeeName: employee ? `${employee.firstName || employee.first_name} ${employee.lastName || employee.last_name}` : 'Nicht besetzt',
           employeePosition: employee?.position || '',
           organizationId: shift.organizationId || shift.organization_id,
@@ -340,7 +349,15 @@ const DashboardComponent: React.FC = () => {
     if (exportSettings.format === 'csv') {
       generateCSVExport(exportData);
     } else {
-      generateExcelExport(exportData);
+      const res = await saveDashboardExcel(exportData, `Dienstplan_Export_${format(new Date(), 'yyyy-MM-dd_HH-mm')}.xlsx`);
+      if (!res.ok) {
+        // Fallback: CSV, um Format/Erweiterungs-Warnungen zu vermeiden
+        generateCSVExport(exportData);
+        setSnackbar({ open: true, message: 'Excel-Export nicht verfügbar – CSV-Export gespeichert.', severity: 'info' });
+      } else {
+        const where = res.path ? `Gespeichert unter: ${res.path}` : 'Excel-Export gespeichert.';
+        setSnackbar({ open: true, message: where, severity: 'success' });
+      }
     }
     
     setExportDialogOpen(false);
@@ -381,90 +398,38 @@ const DashboardComponent: React.FC = () => {
       );
     });
 
-    const shiftTypeMap: Record<string, any> = {};
-    latestShiftTypes.forEach((st: any) => { shiftTypeMap[st.id] = st; });
+  const shiftTypeMap: Record<string, any> = {};
+  latestShiftTypes.forEach((st: any) => { shiftTypeMap[st.id] = st; });
 
-    // Korrekte CSV-Tabellen-Struktur für Excel (deutsches Format mit Semikolon)
-    const csvRows: string[][] = [];
-    
-    // Header-Zeile: Mitarbeiter in Spalte A, dann jedes Datum (kurz) in eigener Spalte
-    const headerRow = ['Mitarbeiter', ...dates.map(d => format(d, 'dd.MM.'))];
-    csvRows.push(headerRow);
+    // Mitarbeiterliste ggf. auf gewählte Organisation filtern
+    const exportEmployees = latestEmployees.filter((emp: any) => !selectedOrganization || (emp.organizationId || emp.organization_id) === selectedOrganization.id);
 
-    // Mitarbeiter-Zeilen
-    latestEmployees.forEach((emp: any) => {
-      if (selectedOrganization && (emp.organizationId || emp.organization_id) !== selectedOrganization.id) return;
-      
-      const name = `${emp.firstName || emp.first_name || ''} ${emp.lastName || emp.last_name || ''}`.trim() || 'Unbekannt';
-      const empRow: string[] = [name];
-      
-      dates.forEach(d => {
-        const dStr = format(d, 'yyyy-MM-dd');
-        const empDayShifts = weekShifts.filter((s: any) => (s.employeeId || s.employee_id) === emp.id && s.date === dStr);
-        
-        if (empDayShifts.length > 0) {
-          const shiftNames = empDayShifts.map((s: any) => {
-            const st = shiftTypeMap[s.shiftTypeId || s.shift_type_id];
-            return st?.name || 'Schicht';
-          });
-          empRow.push(shiftNames.join(' + '));
-        } else {
-          const absence = weekShifts.find((s: any) => !s.employeeId && !s.employee_id && s.date === dStr && shiftTypeMap[s.shiftTypeId || s.shift_type_id]?.category === 'absence');
-          if (absence) {
-            empRow.push(shiftTypeMap[absence.shiftTypeId || absence.shift_type_id]?.name || 'Abwesend');
-          } else {
-            empRow.push('');
-          }
-        }
-      });
-      csvRows.push(empRow);
+    // Daten in das Wochenexport-Format überführen
+    const excelData = buildWeekExcelFromShifts({
+      employees: exportEmployees,
+      days: dates,
+      getShifts: (employeeId: number, day: Date) => {
+        const dStr = format(day, 'yyyy-MM-dd');
+        const empDayShifts = weekShifts.filter((s: any) => (s.employeeId || s.employee_id) === employeeId && s.date === dStr);
+        return empDayShifts.map((s: any) => {
+          const st = shiftTypeMap[s.shiftTypeId || s.shift_type_id] || {};
+          return {
+            startTime: s.startTime || s.start_time,
+            endTime: s.endTime || s.end_time,
+            shiftTypeName: st.name,
+            shiftTypeColor: st.color,
+            shiftTypeCategory: st.category,
+            shiftTypeCountsTowardHours: st.countsTowardHours
+          };
+        });
+      },
+      organizationName: currentOrg?.name,
+      // DashboardComponent does not have direct access to settings; keep headers plain here or wire through later if needed.
+      organizationId: currentOrg?.id
     });
 
-    // Leerzeile
-    csvRows.push([]);
-    
-    // Legende
-    csvRows.push(['Legende']);
-    csvRows.push(['Schichttyp', 'Start', 'Ende']);
-    latestShiftTypes.forEach((st: any) => {
-      csvRows.push([
-        st.name,
-        st.startTime || st.start_time || '',
-        st.endTime || st.end_time || '',
-      ]);
-    });
-
-    // CSV zusammenbauen mit Semikolon und Escaping
-    const csvContent = csvRows.map(row => 
-      row.map(cell => {
-        if (cell == null) return '';
-        const cellStr = cell.toString();
-        // Escape Anführungszeichen und umschließe bei Bedarf
-        if (cellStr.includes('"') || cellStr.includes(';')) {
-          return `"${cellStr.replace(/"/g, '""')}"`;
-        }
-        return cellStr;
-      }).join(';')
-    ).join('\n');
-
-    // BOM für UTF-8 in Excel hinzufügen
-    const csv = '\uFEFF' + csvContent;
-
-    const result = await (window as any).electronAPI?.saveFile?.({
-      title: 'Wochenexport (simpel) speichern',
-      defaultPath: `Wochenplan_${format(dates[0], 'yyyy-MM-dd')}.csv`,
-      filters: [{ name: 'CSV-Dateien', extensions: ['csv'] }]
-    });
-    if (result && !result.canceled && result.filePath) {
-      const writeRes = await (window as any).electronAPI?.writeFile?.(result.filePath, csv);
-      if (writeRes?.success) {
-        setSnackbar({ open: true, message: `Wochenexport gespeichert: ${result.filePath}`, severity: 'success' });
-      } else {
-        setSnackbar({ open: true, message: `Fehler beim Speichern: ${writeRes?.message || 'Unbekannt'}`, severity: 'error' });
-      }
-    } else if (result && result.canceled) {
-      setSnackbar({ open: true, message: 'Export abgebrochen', severity: 'info' });
-    }
+  const res = await saveWeekExcel(excelData, `Wochenplan_${format(dates[0], 'yyyy-MM-dd')}.xlsx`);
+  setSnackbar({ open: true, message: res.ok ? (res.path ? `Gespeichert unter: ${res.path}` : 'Wochenexport gespeichert.') : 'Speichern fehlgeschlagen.', severity: res.ok ? 'success' : 'error' });
     setExportDialogOpen(false);
   };
 
@@ -495,9 +460,7 @@ const DashboardComponent: React.FC = () => {
     if (data.statistics) {
       sections.push('STATISTIKEN');
       sections.push(`Gesamte Schichten: ${data.statistics.totalShifts}`);
-      sections.push(`Besetzte Schichten: ${data.statistics.assignedShifts}`);
-      sections.push(`Offene Schichten: ${data.statistics.unassignedShifts}`);
-      sections.push(`Besetzungsrate: ${data.statistics.assignmentRate}%`);
+      // Entfernt: Besetzte Schichten, Besetzungsrate (Logik abweichend)
       sections.push(`Mitarbeiter: ${data.statistics.employees}`);
       sections.push(`Organisationen: ${data.statistics.organizations}`);
       sections.push(`Schichttypen: ${data.statistics.shiftTypes}`);
@@ -537,9 +500,9 @@ const DashboardComponent: React.FC = () => {
     // Schichten
     if (data.shifts) {
       sections.push('SCHICHTEN');
-      sections.push('ID;Datum;Wochentag;Startzeit;Endzeit;Dauer;Schichttyp;Farbe;Mitarbeiter;Position;Organisation;Notizen;Besetzt');
+      sections.push('ID;Datum;Wochentag;Startzeit;Endzeit;Dauer;Schichttyp;Farbe;Mitarbeiter;Position;Organisation;Notizen');
       data.shifts.forEach((shift: any) => {
-        sections.push(`${shift.id};${shift.date};${shift.weekday};${shift.startTime};${shift.endTime};${shift.duration};${shift.shiftTypeName};${shift.shiftTypeColor};${shift.employeeName};${shift.employeePosition};${shift.organizationName};${shift.notes};${shift.isAssigned}`);
+        sections.push(`${shift.id};${shift.date};${shift.weekday};${shift.startTime};${shift.endTime};${shift.duration};${shift.shiftTypeName};${shift.shiftTypeColor};${shift.employeeName};${shift.employeePosition};${shift.organizationName};${shift.notes}`);
       });
     }
 
@@ -552,50 +515,7 @@ const DashboardComponent: React.FC = () => {
     link.click();
   };
 
-  const generateExcelExport = (data: any) => {
-    // Für echtes Excel könnten wir hier eine Library wie xlsx verwenden
-    // Vorerst verwenden wir erweiterte CSV mit Tab-Separatoren für bessere Excel-Kompatibilität
-    const sections = [];
-    
-    sections.push(`DIENSTPLAN EXPORT\t\t\t\t\t\t`);
-    sections.push(`Organisation:\t${data.metadata.organization}\t\t\t\t\t`);
-    sections.push(`Zeitraum:\t${data.metadata.timeRange}\t\t\t\t\t`);
-    sections.push(`Exportiert am:\t${data.metadata.exportDate}\t\t\t\t\t`);
-    sections.push('\t\t\t\t\t\t');
-
-    if (data.statistics) {
-      sections.push('STATISTIKEN\t\t\t\t\t\t');
-      sections.push(`Gesamte Schichten:\t${data.statistics.totalShifts}\t\t\t\t\t`);
-      sections.push(`Besetzte Schichten:\t${data.statistics.assignedShifts}\t\t\t\t\t`);
-      sections.push(`Offene Schichten:\t${data.statistics.unassignedShifts}\t\t\t\t\t`);
-      sections.push(`Besetzungsrate:\t${data.statistics.assignmentRate}%\t\t\t\t\t`);
-      sections.push('\t\t\t\t\t\t');
-    }
-
-    if (data.shiftTypes) {
-      sections.push('SCHICHTTYPEN\t\t\t\t\t\t');
-      sections.push('Name\tBeschreibung\tZeiten\tFlexibel\tFarbe\tHex-Code');
-      data.shiftTypes.forEach((st: any) => {
-        sections.push(`${st.name}\t${st.description}\t${st.displayTime}\t${st.isFlexible}\t${st.color}\t${st.colorHex}`);
-      });
-      sections.push('\t\t\t\t\t\t');
-    }
-
-    if (data.shifts) {
-      sections.push('SCHICHTEN\t\t\t\t\t\t\t\t\t\t\t\t');
-      sections.push('Datum\tWochentag\tStartzeit\tEndzeit\tDauer\tSchichttyp\tMitarbeiter\tPosition\tOrganisation\tBesetzt\tFarbe\tNotizen');
-      data.shifts.forEach((shift: any) => {
-        sections.push(`${shift.date}\t${shift.weekday}\t${shift.startTime}\t${shift.endTime}\t${shift.duration}\t${shift.shiftTypeName}\t${shift.employeeName}\t${shift.employeePosition}\t${shift.organizationName}\t${shift.isAssigned}\t${shift.shiftTypeColor}\t${shift.notes}`);
-      });
-    }
-
-    const tsvContent = sections.join('\n');
-    const blob = new Blob([tsvContent], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `Dienstplan_Export_${format(new Date(), 'yyyy-MM-dd_HH-mm')}.xls`;
-    link.click();
-  };
+  // generateExcelExport (legacy TSV) entfernt
 
   // Original einfache Export-Funktion (deprecated)
   const handleExcelExport = () => {
@@ -605,7 +525,7 @@ const DashboardComponent: React.FC = () => {
   const currentOrg = selectedOrganization ? selectedOrganization : null;
 
   return (
-    <Box sx={{ p: 2 }}>
+    <Box sx={{ p: 1, width: '100%' }}>
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box>
@@ -723,9 +643,9 @@ const DashboardComponent: React.FC = () => {
         </Grid>
       </Grid>
 
-      <Grid container spacing={3}>
-        {/* Kommende Schichten (nächste 7 Tage) - Doppelt so breit */}
-  <Grid item xs={12} md={9} lg={9} xl={10}>
+  <Grid container spacing={3}>
+    {/* Kommende Schichten (nächste 7 Tage) - Breite Hauptspalte */}
+  <Grid item xs={12} md={8} lg={8} xl={8}>
           <Card>
             <CardContent>
               <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
@@ -821,8 +741,8 @@ const DashboardComponent: React.FC = () => {
           </Card>
         </Grid>
 
-        {/* Schichttypen Übersicht - Schmalere Spalte */}
-  <Grid item xs={12} md={3} lg={3} xl={2}>
+    {/* Schichttypen Übersicht - Breitere Spalte für bessere Lesbarkeit */}
+  <Grid item xs={12} md={4} lg={4} xl={4}>
           <Card>
             <CardContent>
               <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
@@ -954,7 +874,7 @@ const DashboardComponent: React.FC = () => {
                 })}
               >
                 <MenuItem value="csv">CSV (Excel-kompatibel)</MenuItem>
-                <MenuItem value="excel">Excel (.xls) mit Farben</MenuItem>
+                <MenuItem value="excel">Excel (.xlsx) mit Farben</MenuItem>
               </Select>
             </FormControl>
 
@@ -1030,11 +950,8 @@ const DashboardComponent: React.FC = () => {
             {/* Info Box */}
             <Paper sx={{ p: 2, backgroundColor: 'info.light', color: 'info.contrastText' }}>
               <Typography variant="body2">
-                <strong>💡 Tipp:</strong> Der Excel-Export (.xls) enthält die Farben der Schichttypen als Hex-Codes. 
+                <strong>💡 Tipp:</strong> Der Excel-Export (.xlsx) nutzt echte Zellformatierung (Farben, Spaltenbreiten). 
                 CSV-Export ist universell kompatibel und kann in Excel geöffnet werden.
-                {exportSettings.format === 'excel' && (
-                  <><br />🎨 Excel-Format exportiert Farben als formatierte Zellen!</>
-                )}
               </Typography>
             </Paper>
           </Stack>

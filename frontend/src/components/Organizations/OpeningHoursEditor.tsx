@@ -181,7 +181,7 @@ const OpeningHoursEditor: React.FC<OpeningHoursEditorProps> = ({ openingHours, o
                 variant="h6" 
                 component="div"
                 sx={{ 
-                  color: theme.palette.mode === 'dark' ? 'grey.100' : 'grey.900',
+                  color: theme.palette.mode === 'dark' ? theme.palette.text.primary : 'grey.900',
                   fontWeight: 600
                 }}
               >
@@ -190,7 +190,7 @@ const OpeningHoursEditor: React.FC<OpeningHoursEditorProps> = ({ openingHours, o
               <Typography 
                 variant="body2" 
                 sx={{ 
-                  color: theme.palette.mode === 'dark' ? 'grey.300' : 'grey.600',
+                  color: theme.palette.mode === 'dark' ? theme.palette.text.secondary : 'grey.600',
                   mt: 0.5
                 }}
               >

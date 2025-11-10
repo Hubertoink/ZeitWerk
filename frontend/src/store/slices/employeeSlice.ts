@@ -17,6 +17,15 @@ export interface EmployeeCreateData {
   isActive?: boolean;
   notes?: string;
   weeklyHours?: number;
+  dailyHoursPlan?: {
+    mon?: number;
+    tue?: number;
+    wed?: number;
+    thu?: number;
+    fri?: number;
+    sat?: number;
+    sun?: number;
+  };
 }
 
 export interface EmployeeUpdateData {
@@ -34,6 +43,15 @@ export interface EmployeeUpdateData {
   isActive?: boolean;
   notes?: string;
   weeklyHours?: number;
+  dailyHoursPlan?: {
+    mon?: number;
+    tue?: number;
+    wed?: number;
+    thu?: number;
+    fri?: number;
+    sat?: number;
+    sun?: number;
+  };
 }
 
 interface EmployeeState {
