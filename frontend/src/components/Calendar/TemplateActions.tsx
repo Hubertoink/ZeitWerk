@@ -21,7 +21,7 @@ import {
   ListItemText,
   IconButton
 } from '@mui/material';
-import { MoreHoriz, Delete as DeleteIcon, Info as InfoIcon } from '@mui/icons-material';
+import { MoreHoriz, Delete as DeleteIcon, Info as InfoIcon, RemoveCircleOutline as RemoveCircleOutlineIcon } from '@mui/icons-material';
 import { alpha } from '@mui/material/styles';
 import { format, startOfWeek, addDays } from 'date-fns';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
@@ -218,7 +218,12 @@ const TemplateActions: React.FC<TemplateActionsProps> = ({ weekDays, employees, 
 
         // Determine employee
         const employeeId = tpl.templateType === 'personalized'
-          ? (mapping[String(entry.employeeRef?.id || '')] || entry.employeeRef?.id)
+          ? (() => {
+              const key = String(entry.employeeRef?.id || '');
+              // Wichtig: explizit leere Zuordnung ('') muss erhalten bleiben und darf NICHT auf Original-ID zurückfallen
+              if (Object.prototype.hasOwnProperty.call(mapping, key)) return mapping[key];
+              return entry.employeeRef?.id;
+            })()
           : entryAssignments[i] || null;
         if (!employeeId) { skipped++; continue; }
         const employeeExists = employees.some(e => e.id === employeeId);
@@ -439,14 +444,41 @@ const TemplateActions: React.FC<TemplateActionsProps> = ({ weekDays, employees, 
                         if (exists) return `${exists.firstName || exists.first_name || ''} ${exists.lastName || exists.last_name || ''}`.trim() || `Mitarbeiter #${srcId}`;
                         return `Vorlagen-Mitarbeiter #${srcId}`;
                       })();
+                      const srcKey = String(srcId);
+                      const isUnassigned = (mapping[srcKey] ?? '') === '';
                       return (
                         <React.Fragment key={String(srcId)}>
-                          <TextField label="Vorlage" value={labelLeft} disabled />
+                          <Box
+                            sx={{
+                              position: 'relative',
+                              '&:hover .tpl-unassign-btn': { opacity: 1, pointerEvents: 'auto' }
+                            }}
+                          >
+                            <TextField label="Vorlage" value={labelLeft} disabled fullWidth />
+                            <IconButton
+                              className="tpl-unassign-btn"
+                              size="small"
+                              onClick={() => setMapping(prev => ({ ...prev, [srcKey]: '' }))}
+                              title="Zuordnung entfernen"
+                              sx={{
+                                position: 'absolute',
+                                right: 6,
+                                top: '50%',
+                                transform: 'translateY(-50%)',
+                                opacity: isUnassigned ? 1 : 0,
+                                pointerEvents: isUnassigned ? 'auto' : 'none',
+                                transition: 'opacity 120ms ease',
+                                color: 'error.main'
+                              }}
+                            >
+                              <RemoveCircleOutlineIcon sx={{ fontSize: 18 }} />
+                            </IconButton>
+                          </Box>
                           <TextField
                             select
                             label="Zuordnen zu"
-                            value={mapping[String(srcId)] ?? ''}
-                            onChange={e => setMapping(prev => ({ ...prev, [String(srcId)]: e.target.value }))}
+                            value={mapping[srcKey] ?? ''}
+                            onChange={e => setMapping(prev => ({ ...prev, [srcKey]: e.target.value }))}
                           >
                             <MenuItem value="">
                               <em>— Nicht zuordnen —</em>

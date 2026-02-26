@@ -545,6 +545,42 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
             <Divider sx={{ my: 2 }} />
 
             <Typography variant="h6" gutterBottom>
+              Datenaufbewahrung
+            </Typography>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={!!settings.shifts.autoDeleteOldShifts}
+                  onChange={(e) => handleSettingChange('shifts', 'autoDeleteOldShifts', e.target.checked)}
+                />
+              }
+              label="Alte Schichten automatisch löschen"
+            />
+            <FormControl
+              fullWidth
+              margin="normal"
+              disabled={!settings.shifts.autoDeleteOldShifts}
+            >
+              <InputLabel>Aufbewahrungsdauer</InputLabel>
+              <Select
+                value={settings.shifts.autoDeleteAfterMonths ?? 6}
+                label="Aufbewahrungsdauer"
+                onChange={(e) => handleSettingChange('shifts', 'autoDeleteAfterMonths', Number(e.target.value))}
+              >
+                <MenuItem value={3}>3 Monate</MenuItem>
+                <MenuItem value={6}>6 Monate</MenuItem>
+                <MenuItem value={9}>9 Monate</MenuItem>
+                <MenuItem value={12}>12 Monate</MenuItem>
+                <MenuItem value={18}>18 Monate</MenuItem>
+                <MenuItem value={24}>24 Monate</MenuItem>
+              </Select>
+            </FormControl>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Löscht beim App-Start automatisch Schichten, deren Datum älter als die gewählte Aufbewahrungsdauer ist.
+            </Typography>
+            <Divider sx={{ my: 2 }} />
+
+            <Typography variant="h6" gutterBottom>
               Leistung & Grafik
             </Typography>
             <FormControlLabel

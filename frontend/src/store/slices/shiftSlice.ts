@@ -144,6 +144,48 @@ export const deleteShift = createAsyncThunk(
   }
 );
 
+export const cleanupOldShifts = createAsyncThunk(
+  'shifts/cleanupOldShifts',
+  async ({ months }: { months: number }, { rejectWithValue }) => {
+    try {
+      const retentionMonths = Number.isFinite(months) && months > 0 ? months : 6;
+      const cutoffDate = new Date();
+      cutoffDate.setHours(0, 0, 0, 0);
+      cutoffDate.setMonth(cutoffDate.getMonth() - retentionMonths);
+
+      const shifts = await apiService.getShifts();
+      const shiftsToDelete = shifts.filter((shift: any) => {
+        if (!shift?.date) return false;
+        const shiftDate = new Date(`${shift.date}T00:00:00`);
+        if (Number.isNaN(shiftDate.getTime())) return false;
+        return shiftDate < cutoffDate;
+      });
+
+      if (shiftsToDelete.length === 0) {
+        return {
+          deletedCount: 0,
+          scannedCount: shifts.length,
+          cutoffDate: cutoffDate.toISOString().split('T')[0]
+        };
+      }
+
+      const deletionResults = await Promise.allSettled(
+        shiftsToDelete.map((shift: any) => apiService.deleteShift(String(shift.id)))
+      );
+
+      const deletedCount = deletionResults.filter((result) => result.status === 'fulfilled').length;
+
+      return {
+        deletedCount,
+        scannedCount: shifts.length,
+        cutoffDate: cutoffDate.toISOString().split('T')[0]
+      };
+    } catch (error: any) {
+      return rejectWithValue(error.message || 'Fehler bei der Bereinigung alter Schichten');
+    }
+  }
+);
+
 const shiftSlice = createSlice({
   name: 'shifts',
   initialState,

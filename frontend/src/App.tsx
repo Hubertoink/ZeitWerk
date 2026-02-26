@@ -37,7 +37,7 @@ import { fetchEmployees } from './store/slices/employeeSlice';
 import { useSettings } from './contexts/SettingsContext';
 import { TutorialProvider, useTutorial } from './contexts/TutorialContext';
 import { repairCopiedShiftsInconsistencies } from './utils/migrations';
-import { fetchShifts } from './store/slices/shiftSlice';
+import { cleanupOldShifts, fetchShifts } from './store/slices/shiftSlice';
 import Tutorial from './components/Tutorial/Tutorial';
 
 const AppContent: React.FC = () => {
@@ -102,6 +102,35 @@ const AppContent: React.FC = () => {
       }
     })();
   }, [isAuthenticated, dispatch]);
+
+  // Optional automatic cleanup: delete shifts older than configured retention period
+  React.useEffect(() => {
+    if (!isAuthenticated) return;
+    if (!settings?.shifts?.autoDeleteOldShifts) return;
+
+    const months = Number(settings?.shifts?.autoDeleteAfterMonths ?? 6);
+    const today = new Date().toISOString().slice(0, 10);
+    const cleanupKey = `zw_auto_shift_cleanup_${today}_${months}`;
+
+    try {
+      if (localStorage.getItem(cleanupKey)) return;
+    } catch {}
+
+    (async () => {
+      try {
+        const result: any = await dispatch(cleanupOldShifts({ months })).unwrap();
+        if (result?.deletedCount > 0) {
+          dispatch(fetchShifts({}));
+        }
+      } catch (error) {
+        console.warn('Automatische Schicht-Bereinigung fehlgeschlagen:', error);
+      } finally {
+        try {
+          localStorage.setItem(cleanupKey, '1');
+        } catch {}
+      }
+    })();
+  }, [isAuthenticated, settings?.shifts?.autoDeleteOldShifts, settings?.shifts?.autoDeleteAfterMonths, dispatch]);
 
   const handleLogin = () => {
     // Beim Login den Token sofort setzen

@@ -13,6 +13,8 @@ export interface AppSettings {
     breakTimes: BreakTimeRule[];
     defaultBreakDuration: number; // Minuten
     automaticBreakCalculation: boolean;
+    autoDeleteOldShifts: boolean;
+    autoDeleteAfterMonths: number;
   };
   
   // UI Einstellungen
@@ -87,7 +89,9 @@ export const defaultSettings: AppSettings = {
       }
     ],
     defaultBreakDuration: 30,
-    automaticBreakCalculation: true
+    automaticBreakCalculation: true,
+    autoDeleteOldShifts: false,
+    autoDeleteAfterMonths: 6
   },
   ui: {
     fontSize: 'medium',

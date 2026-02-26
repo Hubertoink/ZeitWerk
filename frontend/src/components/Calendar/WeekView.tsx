@@ -23,9 +23,10 @@ import {
   Box,
   Snackbar,
   Alert,
-  TextField
+  TextField,
+  LinearProgress
 } from '@mui/material';
-import { ChevronLeft, ChevronRight, Person as PersonIcon, Close as CloseIcon, ContentCopy as CopyIcon, InfoOutlined, DragIndicator, Reorder as ReorderIcon } from '@mui/icons-material';
+import { ChevronLeft, ChevronRight, Person as PersonIcon, Close as CloseIcon, ContentCopy as CopyIcon, InfoOutlined, DragIndicator, Reorder as ReorderIcon, DeleteSweep as DeleteSweepIcon } from '@mui/icons-material';
 import type { Theme } from '@mui/material/styles';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { setWeekDate, navigateWeek } from '../../store/slices/calendarSlice';
@@ -117,6 +118,13 @@ const WeekView: React.FC = () => {
     date: null as string | null 
   });
   const [weekCopyDialog, setWeekCopyDialog] = useState({ open: false });
+  const [isCopyingWeek, setIsCopyingWeek] = useState(false);
+  const [deletingEmployeeWeekId, setDeletingEmployeeWeekId] = useState<string | null>(null);
+  const [deleteEmployeeWeekDialog, setDeleteEmployeeWeekDialog] = useState<{
+    open: boolean;
+    employee: any | null;
+    shiftIds: number[];
+  }>({ open: false, employee: null, shiftIds: [] });
   // Reorder mode for employees
   const [isReorderMode, setIsReorderMode] = useState(false);
   const [draftEmployeeOrder, setDraftEmployeeOrder] = useState<string[]>([]);
@@ -413,6 +421,11 @@ const WeekView: React.FC = () => {
     const newShiftType = shiftTypes.find((st: any) => st.id === newShiftData.shiftTypeId);
     if (!newShiftType) return { hasConflict: false, conflicts: [] };
 
+    const normalizeCategory = (shiftType: any): 'regular' | 'absence' => {
+      return shiftType?.category === 'absence' ? 'absence' : 'regular';
+    };
+    const newShiftCategory = normalizeCategory(newShiftType);
+
     // Finde existierende Schichten für diesen Mitarbeiter am gleichen Tag
     const existingShifts = shifts.filter((shift: any) => 
       (shift.employeeId || shift.employee_id)?.toString() === newShiftData.employeeId.toString() &&
@@ -424,12 +437,27 @@ const WeekView: React.FC = () => {
     }
 
     const conflicts = [];
+
+    const getInterval = (shiftLike: any) => {
+      const startRaw = shiftLike.startTime || shiftLike.start_time;
+      const endRaw = shiftLike.endTime || shiftLike.end_time;
+      if (!startRaw || !endRaw) return null;
+      const start = parseTimeToMinutes(startRaw);
+      let end = parseTimeToMinutes(endRaw);
+      if (end === 0 && start > 0 && (endRaw === '00:00' || endRaw === '0:00' || endRaw === '00:0')) {
+        end = 24 * 60;
+      }
+      if (end <= start) return null;
+      return { start, end, startRaw, endRaw };
+    };
+    const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }) => a.start < b.end && b.start < a.end;
     
     for (const existingShift of existingShifts) {
       const existingShiftType = shiftTypes.find((st: any) => 
         st.id.toString() === (existingShift.shiftTypeId || existingShift.shift_type_id)?.toString()
       );
       if (!existingShiftType) continue;
+      const existingShiftCategory = normalizeCategory(existingShiftType);
 
       // Regeln:
       // 1. Reguläre Schichten (category: 'regular') können nicht doppelt sein
@@ -437,15 +465,24 @@ const WeekView: React.FC = () => {
       // 3. Höhere Priorität überschreibt niedrigere
       // 4. Spezielle Schichten (Urlaub, Krankheit) können parallel existieren
 
-      if (newShiftType.category === 'regular' && existingShiftType.category === 'regular') {
-        // Zwei reguläre Schichten - das ist ein Konflikt
-        conflicts.push({
-          type: 'duplicate_regular',
-          existing: existingShift,
-          existingShiftType,
-          message: `${existingShiftType.name} ist bereits für diesen Tag geplant. Reguläre Schichten können nicht doppelt vergeben werden.`
-        });
-      } else if (newShiftType.category === 'absence' && existingShiftType.category === 'absence') {
+      if (newShiftCategory === 'regular' && existingShiftCategory === 'regular') {
+        const newIsAllDay = !!newShiftType?.isAllDay;
+        const existingIsAllDay = !!existingShiftType?.isAllDay || !!existingShift?.shiftTypeIsAllDay;
+        const newInterval = getInterval(newShiftData);
+        const existingInterval = getInterval(existingShift);
+        const hasOverlap = !newInterval || !existingInterval ? true : overlaps(newInterval, existingInterval);
+
+        // Reguläre Schichten sind erlaubt, wenn sie sich zeitlich NICHT überschneiden
+        // Ganztägige/ungültige Zeitfenster behandeln wir konservativ als Konflikt
+        if (newIsAllDay || existingIsAllDay || hasOverlap) {
+          conflicts.push({
+            type: 'duplicate_regular',
+            existing: existingShift,
+            existingShiftType,
+            message: `${existingShiftType.name} ist bereits für diesen Tag geplant und überschneidet sich zeitlich mit der neuen Schicht.`
+          });
+        }
+      } else if (newShiftCategory === 'absence' && existingShiftCategory === 'absence') {
         // Zwei Abwesenheiten - prüfe Priorität
         const newPriority = newShiftType.priority || 1;
         const existingPriority = existingShiftType.priority || 1;
@@ -458,7 +495,7 @@ const WeekView: React.FC = () => {
             message: `${existingShiftType.name} ist bereits eingetragen. Soll ${newShiftType.name} diese ersetzen?`
           });
         }
-      } else if (newShiftType.category === 'regular' && existingShiftType.category === 'absence') {
+      } else if (newShiftCategory === 'regular' && existingShiftCategory === 'absence') {
         // Reguläre Schicht über Abwesenheit - warnen aber erlauben
         conflicts.push({
           type: 'regular_over_absence',
@@ -682,6 +719,58 @@ const WeekView: React.FC = () => {
     }
   };
 
+  const openDeleteEmployeeWeekDialog = (employee: any) => {
+    if (!weekDays || weekDays.length === 0) {
+      setSnackbar({ open: true, message: 'Keine Woche ausgewählt', severity: 'error' });
+      return;
+    }
+
+    const startStr = format(weekDays[0], 'yyyy-MM-dd');
+    const endStr = format(weekDays[weekDays.length - 1], 'yyyy-MM-dd');
+    const empId = employee.id?.toString?.();
+
+    const weekShiftsForEmployee = shifts.filter((shift: any) => {
+      const shiftEmp = (shift.employeeId || shift.employee_id)?.toString?.();
+      const date = shift.date;
+      return shiftEmp === empId && date >= startStr && date <= endStr;
+    });
+
+    if (weekShiftsForEmployee.length === 0) {
+      setSnackbar({ open: true, message: 'Keine Schichten in dieser Woche für diesen Mitarbeiter gefunden', severity: 'info' });
+      return;
+    }
+
+    setDeleteEmployeeWeekDialog({
+      open: true,
+      employee,
+      shiftIds: weekShiftsForEmployee.map((s: any) => Number(s.id)).filter((id: number) => Number.isFinite(id))
+    });
+  };
+
+  const handleDeleteEmployeeWeekShifts = async () => {
+    try {
+      const employee = deleteEmployeeWeekDialog.employee;
+      const shiftIds = deleteEmployeeWeekDialog.shiftIds || [];
+      if (!employee || shiftIds.length === 0) {
+        setDeleteEmployeeWeekDialog({ open: false, employee: null, shiftIds: [] });
+        return;
+      }
+
+      setDeletingEmployeeWeekId(employee.id?.toString?.() || null);
+      for (const shiftId of shiftIds) {
+        await dispatch(deleteShift(shiftId)).unwrap();
+      }
+      dispatch(fetchShifts({}));
+      setSnackbar({ open: true, message: `${shiftIds.length} Schicht(en) für diese Woche gelöscht`, severity: 'success' });
+      setDeleteEmployeeWeekDialog({ open: false, employee: null, shiftIds: [] });
+    } catch (error) {
+      console.error('Fehler beim Löschen der Wochen-Schichten:', error);
+      setSnackbar({ open: true, message: 'Fehler beim Löschen der Wochen-Schichten', severity: 'error' });
+    } finally {
+      setDeletingEmployeeWeekId(null);
+    }
+  };
+
   const handleEditShift = (shift: any) => {
     // Finde den passenden Schichttyp für diese Schicht
     const shiftType = shiftTypes.find((st: any) => st.id === shift.shiftTypeId);
@@ -727,10 +816,13 @@ const WeekView: React.FC = () => {
   };
 
   const handleCopyWeek = async () => {
+    if (isCopyingWeek) return;
+    setIsCopyingWeek(true);
     try {
       // Guard: keine Woche berechnet
       if (!weekDays || weekDays.length === 0) {
         setSnackbar({ open: true, message: 'Keine Woche ausgewählt', severity: 'error' });
+        setIsCopyingWeek(false);
         return;
       }
 
@@ -774,6 +866,8 @@ const WeekView: React.FC = () => {
     } catch (error) {
       console.error('Fehler beim Kopieren der Woche:', error);
       setSnackbar({ open: true, message: 'Fehler beim Kopieren der Woche', severity: 'error' });
+    } finally {
+      setIsCopyingWeek(false);
     }
   };
 
@@ -1034,7 +1128,7 @@ const WeekView: React.FC = () => {
                 px: 1,
                 py: 0.25,
                 cursor: 'grab',
-                '&:hover': { transform: 'scale(1.05)' },
+                '&:hover': {},
                 '&:active': { cursor: 'grabbing' }
               })}
               size="small"
@@ -1160,7 +1254,7 @@ const WeekView: React.FC = () => {
                 onDrop={handleRowDrop(rowIndex)}
               >
                 <TableCell sx={{ fontWeight: 'medium', borderRight: '1px solid', borderRightColor: 'divider', cursor: isReorderMode ? 'move' : 'default' }}>
-                  <Box display="flex" alignItems="center" gap={1}>
+                  <Box display="flex" alignItems="center" gap={1} sx={{ '&:hover .employee-week-delete': { opacity: 1, pointerEvents: 'auto' } }}>
                     {isReorderMode && (
                       <DragIndicator fontSize="small" color="action" />
                     )}
@@ -1170,10 +1264,35 @@ const WeekView: React.FC = () => {
                     >
                       {(employee.photoPath || employee.photoUrl) ? null : <PersonIcon fontSize="small" />}
                     </Avatar>
-                    <Box>
-                      <Typography variant="subtitle2">
-                        {employee.firstName} {employee.lastName}
-                      </Typography>
+                    <Box sx={{ minWidth: 0, flex: 1 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Typography variant="subtitle2" sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {employee.firstName} {employee.lastName}
+                        </Typography>
+                        <Tooltip title="Wochenschichten dieses Mitarbeiters löschen">
+                          <span>
+                            <IconButton
+                              className="employee-week-delete"
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDeleteEmployeeWeekDialog(employee);
+                              }}
+                              disabled={deletingEmployeeWeekId === employee.id?.toString?.()}
+                              sx={{
+                                width: 20,
+                                height: 20,
+                                opacity: 0,
+                                pointerEvents: 'none',
+                                transition: 'opacity 120ms ease',
+                                color: 'error.main'
+                              }}
+                            >
+                              <DeleteSweepIcon sx={{ fontSize: 16 }} />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </Box>
                       <Typography variant="caption" color="text.secondary">
                         {employee.position || 'Mitarbeiter'}
                       </Typography>
@@ -1343,6 +1462,7 @@ const WeekView: React.FC = () => {
                               cursor: 'grab',
                               minHeight: 24,
                               position: 'relative',
+                              overflow: 'visible',
                               width: '100%',
                               boxSizing: 'border-box',
                               backgroundColor: shift.shiftTypeColor || '#ccc',
@@ -1350,16 +1470,21 @@ const WeekView: React.FC = () => {
                               borderRadius: 8,
                               border: '2px solid transparent',
                               boxShadow: 'none',
+                              backdropFilter: 'none',
+                              WebkitBackdropFilter: 'none',
                               backgroundImage: 'none',
-                              transition: 'none',
+                              transition: 'none !important',
                               transform: 'none',
-                              '&:hover': { 
+                              '&&:hover': { 
                                 backgroundColor: shift.shiftTypeColor || '#ccc',
+                                border: '2px solid transparent',
                                 backgroundImage: 'none',
-                                borderColor: '#ffffff',
-                                boxShadow: 'none',
-                                transform: 'none',
-                                transition: 'none',
+                                boxShadow: 'none !important',
+                                transform: 'none !important',
+                                filter: 'none !important',
+                                backdropFilter: 'none !important',
+                                WebkitBackdropFilter: 'none !important',
+                                transition: 'none !important',
                                 '& .delete-button': { display: 'flex' }
                               }
                             })}
@@ -1456,26 +1581,27 @@ const WeekView: React.FC = () => {
                                 size="small"
                                 sx={{
                                   position: 'absolute',
-                                  top: 2,
-                                  right: 2,
+                                  top: -8,
+                                  right: -8,
                                   width: 22,
                                   height: 22,
                                   display: 'none',
                                   bgcolor: 'error.main',
                                   color: 'white',
+                                  boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
                                   '&:hover': { bgcolor: 'error.dark' },
                                   minWidth: 'unset',
                                   borderRadius: '50%',
                                   p: 0,
                                   alignItems: 'center',
-                                  justifyContent: 'center'
+                                  justifyContent: 'center',
+                                  zIndex: 20
                                 }}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleDeleteShift(shift.id);
                                 }}
                               >
-                                {/* Close icon (no extra circle) centered in red dot */}
                                 <CloseIcon sx={{ fontSize: 14, lineHeight: 1 }} />
                               </IconButton>
                             </CardContent>
@@ -1720,7 +1846,7 @@ const WeekView: React.FC = () => {
       </Dialog>
 
       {/* Week Copy Dialog */}
-      <Dialog open={weekCopyDialog.open} onClose={() => setWeekCopyDialog({ open: false })}>
+      <Dialog open={weekCopyDialog.open} onClose={isCopyingWeek ? undefined : () => setWeekCopyDialog({ open: false })}>
         <DialogTitle>Woche kopieren</DialogTitle>
         <DialogContent>
           <Typography>
@@ -1746,12 +1872,59 @@ const WeekView: React.FC = () => {
               </>
             )}
           </Typography>
+          {isCopyingWeek && (
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>Schichten werden kopiert…</Typography>
+              <LinearProgress />
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setWeekCopyDialog({ open: false })}>Abbrechen</Button>
-          <Button onClick={handleCopyWeek} variant="contained">Kopieren</Button>
+          <Button onClick={() => setWeekCopyDialog({ open: false })} disabled={isCopyingWeek}>Abbrechen</Button>
+          <Button onClick={handleCopyWeek} variant="contained" disabled={isCopyingWeek}>
+            {isCopyingWeek ? 'Kopiere…' : 'Kopieren'}
+          </Button>
         </DialogActions>
       </Dialog>
+
+        {/* Mitarbeiter-Woche löschen Dialog */}
+        <Dialog
+          open={deleteEmployeeWeekDialog.open}
+          onClose={deletingEmployeeWeekId ? undefined : () => setDeleteEmployeeWeekDialog({ open: false, employee: null, shiftIds: [] })}
+          maxWidth="xs"
+          fullWidth
+        >
+          <DialogTitle>Wochenschichten löschen</DialogTitle>
+          <DialogContent>
+            <Typography>
+              {deleteEmployeeWeekDialog.employee
+                ? `${deleteEmployeeWeekDialog.employee.firstName || ''} ${deleteEmployeeWeekDialog.employee.lastName || ''}: ${deleteEmployeeWeekDialog.shiftIds.length} Schicht(en) dieser Woche wirklich löschen?`
+                : 'Schichten dieser Woche wirklich löschen?'}
+            </Typography>
+            {deletingEmployeeWeekId && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>Schichten werden gelöscht…</Typography>
+                <LinearProgress />
+              </Box>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button
+              onClick={() => setDeleteEmployeeWeekDialog({ open: false, employee: null, shiftIds: [] })}
+              disabled={!!deletingEmployeeWeekId}
+            >
+              Abbrechen
+            </Button>
+            <Button
+              onClick={handleDeleteEmployeeWeekShifts}
+              variant="contained"
+              color="error"
+              disabled={!!deletingEmployeeWeekId}
+            >
+              {deletingEmployeeWeekId ? 'Lösche…' : 'Löschen'}
+            </Button>
+          </DialogActions>
+        </Dialog>
 
       {/* Konflikt-Dialog */}
       <Dialog 

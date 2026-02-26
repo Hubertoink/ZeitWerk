@@ -210,7 +210,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   };
 
   return (
-    <Box sx={{ display: 'flex' }}>
+    <Box sx={{ display: 'flex', width: '100%' }}>
       <AppBar position="fixed" sx={{ zIndex: (theme) => theme.zIndex.drawer + 1 }}>
         <Toolbar sx={{
           '& .MuiTypography-root': { color: (theme) => theme.palette.primary.contrastText },
@@ -498,10 +498,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         component="main" 
         sx={{ 
           flexGrow: 1, 
+          minWidth: 0,
           p: 0.25, // Minimales padding
           marginLeft: isCollapsed ? '10px' : '10px', // Immer 10px margin
-          transition: 'margin-left 0.3s ease',
-          width: isCollapsed ? 'calc(100% - 74px)' : 'calc(100% - 210px)' // Dynamische Breite
+          transition: 'margin-left 0.3s ease'
         }}
       >
         <Toolbar /> {/* Normale Toolbar-Höhe für korrektes Spacing */}

@@ -290,9 +290,9 @@ const ShiftTypeList: React.FC = () => {
       )}
 
       {/* Karten-Ansicht für bessere Übersicht */}
-      <Grid container spacing={3} sx={{ mb: 3 }}>
+      <Grid container spacing={2} sx={{ mb: 3 }}>
         {shiftTypes.map((shiftType) => (
-          <Grid item xs={12} sm={6} md={4} key={shiftType.id}>
+          <Grid item xs={12} sm={6} md={4} lg={3} key={shiftType.id}>
             <Card sx={{ 
               height: '100%',
               // Hervorhebung für Urlaub/Krankheit
@@ -305,9 +305,10 @@ const ShiftTypeList: React.FC = () => {
                 }
               })
             }}>
-              <CardContent>
-                <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={2}>
+              <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 } }}>
+                <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
                   <Chip 
+                    size="small"
                     label={
                       ['Urlaub', 'Krankheit'].includes(shiftType.name) 
                         ? `🔒 ${shiftType.name}` 
@@ -343,13 +344,13 @@ const ShiftTypeList: React.FC = () => {
                   </Box>
                 </Box>
                 
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
                   {shiftType.description || 'Keine Beschreibung'}
                 </Typography>
                 
-                <Box display="flex" alignItems="center" gap={1}>
-                  <TimeIcon fontSize="small" color="action" />
-                  <Typography variant="body2">
+                <Box display="flex" alignItems="center" gap={0.5}>
+                  <TimeIcon sx={{ fontSize: 16 }} color="action" />
+                  <Typography variant="caption">
                     {shiftType.isAllDay ? 'Ganztägig' : (shiftType.isFlexible 
                       ? 'Flexible Zeiten' 
                       : `${shiftType.startTime || 'N/A'} - ${endDisplayWithMidnight(shiftType.startTime, shiftType.endTime) || 'N/A'}`)}
@@ -367,7 +368,7 @@ const ShiftTypeList: React.FC = () => {
                     );
                   })()
                 )}
-                <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                <Box sx={{ mt: 0.5, display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                   {shiftType.isAllDay && (
                     <Chip
                       size="small"

@@ -57,7 +57,7 @@ const DashboardComponent: React.FC = () => {
   // Export Dialog State
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportSettings, setExportSettings] = useState({
-    timeRange: 'month', // week, month, quarter, year, custom
+    timeRange: 'month', // week, month, nextMonth, quarter, year, custom
     customStartDate: format(new Date(), 'yyyy-MM-dd'),
     customEndDate: format(addDays(new Date(), 30), 'yyyy-MM-dd'),
     includeStatistics: true,
@@ -172,6 +172,10 @@ const DashboardComponent: React.FC = () => {
       case 'month':
         startDate = new Date(today.getFullYear(), today.getMonth(), 1);
         endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        break;
+      case 'nextMonth':
+        startDate = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+        endDate = new Date(today.getFullYear(), today.getMonth() + 2, 0);
         break;
       case 'quarter':
         const quarter = Math.floor(today.getMonth() / 3);
@@ -828,6 +832,7 @@ const DashboardComponent: React.FC = () => {
               >
                 <MenuItem value="week">Diese Woche</MenuItem>
                 <MenuItem value="month">Dieser Monat</MenuItem>
+                <MenuItem value="nextMonth">Nächster Monat</MenuItem>
                 <MenuItem value="quarter">Dieses Quartal</MenuItem>
                 <MenuItem value="year">Dieses Jahr</MenuItem>
                 <MenuItem value="custom">Benutzerdefiniert</MenuItem>
