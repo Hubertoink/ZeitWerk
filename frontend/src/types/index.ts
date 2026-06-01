@@ -13,6 +13,7 @@ export interface Employee {
   position?: string;
   department?: string;
   hireDate?: string;
+  exitDate?: string;
   organizationId: string;
   isActive: boolean;
   createdAt: string;
@@ -71,6 +72,18 @@ export interface ShiftType {
   updatedAt: string;
 }
 
+// Aufgabentypen Types
+export interface TaskType {
+  id: string;
+  name: string;
+  color: string;
+  description?: string;
+  organizationId?: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // Schichten Types
 export interface Shift {
   id: string;
@@ -87,6 +100,22 @@ export interface Shift {
   employeeName?: string;
   createdAt: string; // Changed from Date to string
   updatedAt: string; // Changed from Date to string
+}
+
+// Aufgaben Types
+export interface Task {
+  id: string;
+  employeeId: string;
+  taskTypeId: string;
+  date: string;
+  time?: string;
+  notes?: string;
+  organizationId: string;
+  taskTypeName?: string;
+  taskTypeColor?: string;
+  employeeName?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // Calendar View Types

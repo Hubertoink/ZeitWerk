@@ -219,7 +219,16 @@ const Tutorial: React.FC<TutorialProps> = ({ open, onClose, onComplete }) => {
       PaperProps={{
         sx: {
           borderRadius: 2,
-          // In Light Mode klare Lesbarkeit: weniger Transparenz, heller Hintergrund
+          // Dialog unten rechts positionieren, damit Sidebar und Seite sichtbar bleiben
+          position: 'fixed',
+          bottom: 24,
+          right: 24,
+          m: 0,
+          maxWidth: 480,
+          width: 'calc(100% - 48px)',
+          maxHeight: 'calc(100vh - 48px)',
+          boxShadow: 8,
+          // In Light Mode klare Lesbarkeit
           background: theme.palette.mode === 'light'
             ? theme.palette.background.paper
             : `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.05)} 0%, ${alpha(theme.palette.secondary.main, 0.05)} 100%)`
@@ -227,7 +236,9 @@ const Tutorial: React.FC<TutorialProps> = ({ open, onClose, onComplete }) => {
       }}
       BackdropProps={{
         sx: {
-          backgroundColor: theme.palette.mode === 'light' ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.6)'
+          // Sehr transparent damit die Seite dahinter sichtbar bleibt
+          backgroundColor: theme.palette.mode === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.25)',
+          backdropFilter: 'none'
         }
       }}
     >

@@ -25,12 +25,16 @@ export interface AppSettings {
     themePresetLight?: 'standard' | 'pastel-dreamland' | 'rustic-charm';
     themePresetDark?: 'standard' | 'vintage-charm' | 'cherry-blossom';
     lowGpuMode?: boolean; // Hardwarebeschleunigung deaktivieren
+    // Slide-Animation beim Wochenwechsel
+    weekSlideAnimation?: boolean;
     // Menü-Icons: monochrom (Standard) oder theme-basiert eingefärbt
     menuIconColor?: 'monochrome' | 'themed';
     // Mitarbeiter-Reihenfolge in der Wochenansicht
     employeeOrderMode?: 'alphabetical' | 'custom';
     // Pro Organisation (orgId) eine Wunschreihenfolge der Mitarbeiter-IDs (als String)
     employeeOrderByOrg?: Record<string, string[]>;
+    // Pro Organisation (orgId) die sichtbaren Mitarbeiter-IDs in der Wochenansicht
+    employeeVisibilityByOrg?: Record<string, string[]>;
   };
 
   // Admin & Authentifizierung
@@ -100,9 +104,11 @@ export const defaultSettings: AppSettings = {
     themePresetLight: 'standard',
     themePresetDark: 'standard',
     lowGpuMode: false,
+    weekSlideAnimation: true,
     menuIconColor: 'monochrome',
     employeeOrderMode: 'alphabetical',
-    employeeOrderByOrg: {}
+    employeeOrderByOrg: {},
+    employeeVisibilityByOrg: {}
   },
   admin: {
     adminUsername: 'Administrator',

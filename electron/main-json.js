@@ -336,6 +336,59 @@ class DienstplanApp {
             return this.db.getEmployeeShifts(employeeId, startDate, endDate);
         });
 
+        // TASKS
+        ipcMain.handle('tasks:getAll', async (event, filters) => {
+            if (filters && (filters.startDate || filters.endDate)) {
+                return this.db.getTasksByDateRange(
+                    filters.startDate || '1900-01-01',
+                    filters.endDate || '2100-12-31',
+                    filters.organizationId
+                );
+            }
+            return this.db.findAll('tasks', filters);
+        });
+
+        ipcMain.handle('tasks:getById', async (event, id) => {
+            return this.db.findById('tasks', id);
+        });
+
+        ipcMain.handle('tasks:create', async (event, task) => {
+            return this.db.create('tasks', task);
+        });
+
+        ipcMain.handle('tasks:update', async (event, id, updates) => {
+            return this.db.update('tasks', id, updates);
+        });
+
+        ipcMain.handle('tasks:delete', async (event, id) => {
+            return this.db.delete('tasks', id);
+        });
+
+        ipcMain.handle('tasks:getByEmployee', async (event, employeeId, startDate, endDate) => {
+            return this.db.getEmployeeTasks(employeeId, startDate, endDate);
+        });
+
+        // TASK TYPES
+        ipcMain.handle('task-types:getAll', async (event, organizationId) => {
+            return this.db.findAll('taskTypes', organizationId ? { organizationId } : {});
+        });
+
+        ipcMain.handle('task-types:getById', async (event, id) => {
+            return this.db.findById('taskTypes', id);
+        });
+
+        ipcMain.handle('task-types:create', async (event, taskType) => {
+            return this.db.create('taskTypes', taskType);
+        });
+
+        ipcMain.handle('task-types:update', async (event, id, updates) => {
+            return this.db.update('taskTypes', id, updates);
+        });
+
+        ipcMain.handle('task-types:delete', async (event, id) => {
+            return this.db.delete('taskTypes', id);
+        });
+
         // SHIFT TYPES
         ipcMain.handle('shift-types:getAll', async (event, organizationId) => {
             return this.db.findAll('shiftTypes', organizationId ? { organizationId } : {});

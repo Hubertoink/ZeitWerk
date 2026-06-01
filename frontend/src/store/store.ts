@@ -4,6 +4,8 @@ import employeeSlice from './slices/employeeSlice';
 import organizationSlice from './slices/organizationSlice';
 import shiftSlice from './slices/shiftSlice';
 import shiftTypeSlice from './slices/shiftTypeSlice';
+import taskSlice from './slices/taskSlice';
+import taskTypeSlice from './slices/taskTypeSlice';
 import calendarSlice from './slices/calendarSlice';
 
 export const store = configureStore({
@@ -13,6 +15,8 @@ export const store = configureStore({
     organizations: organizationSlice,
     shifts: shiftSlice,
     shiftTypes: shiftTypeSlice,
+    tasks: taskSlice,
+    taskTypes: taskTypeSlice,
     calendar: calendarSlice,
   },
   middleware: (getDefaultMiddleware) =>

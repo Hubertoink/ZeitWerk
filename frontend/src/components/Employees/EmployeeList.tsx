@@ -3,6 +3,7 @@ import {
   Box,
   Typography,
   Button,
+  useMediaQuery,
   Table,
   TableBody,
   TableCell,
@@ -27,6 +28,7 @@ import {
   InputAdornment,
   Autocomplete
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import {
   Add as AddIcon,
   Edit as EditIcon,
@@ -51,6 +53,7 @@ interface EmployeeFormData {
   position: string;
   department: string;
   hireDate: string;
+  exitDate: string;
   organizationId: string;
   notes?: string;
   weeklyHours?: string; // Eingabe als Text, Speicherung als Zahl
@@ -69,6 +72,10 @@ const EmployeeList: React.FC = () => {
   const dispatch = useAppDispatch();
   const { employees, error } = useAppSelector((state: any) => state.employees);
   const { organizations } = useAppSelector((state: any) => state.organizations);
+  const theme = useTheme();
+  const isCompactLayout = useMediaQuery(theme.breakpoints.down('lg'));
+  const isSmallScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const isCardLayout = useMediaQuery(theme.breakpoints.down('sm'));
 
   const [open, setOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<any>(null);
@@ -87,6 +94,7 @@ const EmployeeList: React.FC = () => {
     position: '',
     department: '',
     hireDate: '',
+    exitDate: '',
     organizationId: '',
     notes: '',
     weeklyHours: '',
@@ -138,6 +146,7 @@ const EmployeeList: React.FC = () => {
         position: employee.position || '',
         department: employee.department || '',
         hireDate: employee.hireDate ? employee.hireDate.split('T')[0] : '',
+        exitDate: employee.exitDate ? employee.exitDate.split('T')[0] : '',
         organizationId: employee.organizationId || '',
         notes: employee.notes || '',
         weeklyHours: (typeof employee.weeklyHours === 'number' && !isNaN(employee.weeklyHours)) ? String(employee.weeklyHours) : '',
@@ -165,6 +174,7 @@ const EmployeeList: React.FC = () => {
         position: '',
         department: '',
         hireDate: '',
+        exitDate: '',
         organizationId: defaultOrgId,
         notes: '',
         weeklyHours: '',
@@ -177,6 +187,7 @@ const EmployeeList: React.FC = () => {
   const hasFormData = () => {
     return formData.firstName.trim() || formData.lastName.trim() || formData.email.trim() || 
            formData.phone.trim() || formData.position.trim() || formData.department.trim() ||
+          formData.hireDate.trim() || formData.exitDate.trim() ||
            formData.notes?.trim() || formData.weeklyHours?.trim() ||
            Object.values(formData.dailyHoursPlan || {}).some(v => (v || '').trim() !== '');
   };
@@ -217,8 +228,15 @@ const EmployeeList: React.FC = () => {
         setSnackbar({ open: true, message: 'Nachname ist erforderlich', severity: 'error' });
         return;
       }
+
+      if (formData.hireDate && formData.exitDate && formData.exitDate < formData.hireDate) {
+        setSnackbar({ open: true, message: 'Das Austrittsdatum darf nicht vor dem Eintrittsdatum liegen', severity: 'error' });
+        return;
+      }
       
       const payload: any = { ...formData };
+      if (!payload.hireDate) delete payload.hireDate;
+      if (!payload.exitDate) delete payload.exitDate;
       // Prefer photoPath over photoUrl; if photoPath exists, clear photoUrl to avoid confusion
       if (payload.photoPath) payload.photoUrl = '';
       // Parse weeklyHours (string) to number, accept comma as decimal separator
@@ -265,6 +283,7 @@ const EmployeeList: React.FC = () => {
         position: '',
         department: '',
         hireDate: '',
+        exitDate: '',
         organizationId: '',
         notes: '',
         weeklyHours: '',
@@ -336,17 +355,51 @@ const EmployeeList: React.FC = () => {
            department.includes(searchLower);
   });
 
+  const visibleEmployeesCount = filteredEmployees.length;
+  const hasActiveSearch = searchTerm.trim().length > 0;
+
+  const formatEmployeeDate = (value?: string) => {
+    if (!value) return '—';
+    return new Date(value).toLocaleDateString('de-DE');
+  };
+
   return (
-    <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4" component="h1">
-          Mitarbeiter
-        </Typography>
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+        height: 'calc(100vh - 88px)',
+        minHeight: 0,
+        pr: 0.5,
+      }}
+    >
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: { xs: 'column', lg: 'row' },
+          justifyContent: 'space-between',
+          alignItems: { xs: 'stretch', lg: 'flex-start' },
+          gap: 2,
+        }}
+      >
+        <Box>
+          <Typography variant="h4" component="h1">
+            Mitarbeiter
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Die Tabelle bleibt in einem eigenen Scrollbereich, damit horizontales Scrollen auch bei vielen Eintr\u00e4gen direkt erreichbar ist.
+          </Typography>
+        </Box>
         <Button
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
-          sx={{ mt: 1 }}
+          sx={{
+            mt: { xs: 0, lg: 1 },
+            alignSelf: { xs: 'stretch', lg: 'flex-start' },
+            whiteSpace: 'nowrap',
+          }}
         >
           Neuer Mitarbeiter
         </Button>
@@ -358,44 +411,262 @@ const EmployeeList: React.FC = () => {
         </Alert>
       )}
 
-      {/* Suchfeld */}
-      <Box sx={{ mb: 3 }}>
-        <TextField
-          fullWidth
-          variant="outlined"
-          placeholder="Mitarbeiter suchen (Name, E-Mail, Position, Bereich)..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          sx={{ maxWidth: 600 }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon />
-              </InputAdornment>
-            ),
+      <Paper
+        variant="outlined"
+        sx={{
+          p: { xs: 1.5, md: 2 },
+          borderRadius: 2,
+        }}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: { xs: 'column', md: 'row' },
+            alignItems: { xs: 'stretch', md: 'center' },
+            justifyContent: 'space-between',
+            gap: 1.5,
           }}
-        />
-      </Box>
+        >
+          <TextField
+            fullWidth
+            variant="outlined"
+            placeholder="Mitarbeiter suchen (Name, E-Mail, Position, Bereich)..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            sx={{ maxWidth: { xs: 'none', md: 600 } }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon />
+                </InputAdornment>
+              ),
+            }}
+          />
 
-      <TableContainer component={Paper}>
-        <Table>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+            <Chip
+              color="primary"
+              variant={hasActiveSearch ? 'filled' : 'outlined'}
+              label={hasActiveSearch ? `${visibleEmployeesCount} Treffer` : `${employees.length} Mitarbeiter`}
+            />
+            <Chip
+              variant="outlined"
+              label={isCompactLayout ? 'Horizontales Scrollen bleibt im Tabellenbereich sichtbar' : 'Kopfzeile bleibt beim Scrollen sichtbar'}
+            />
+          </Box>
+        </Box>
+      </Paper>
+
+      <Paper
+        variant="outlined"
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
+          overflow: 'hidden',
+          borderRadius: 2,
+        }}
+      >
+        <Box
+          sx={{
+            px: { xs: 1.5, md: 2 },
+            py: 1.25,
+            borderBottom: 1,
+            borderColor: 'divider',
+          }}
+        >
+          <Typography variant="subtitle2">
+            {isCardLayout ? 'Mitarbeiterkarten' : 'Mitarbeiterliste'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {isCardLayout
+              ? 'Auf kleinen Breiten werden die Einträge als Karten dargestellt. So bleiben alle Informationen ohne horizontales Scrollen lesbar.'
+              : 'Vertikal wird innerhalb der Tabelle gescrollt. Dadurch bleibt die horizontale Scrollleiste ohne Scrollen bis ans Seitenende erreichbar.'}
+          </Typography>
+        </Box>
+
+        {isCardLayout ? (
+          <Box
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              overflow: 'auto',
+              p: 1.5,
+              display: 'grid',
+              gridTemplateColumns: '1fr',
+              gap: 1.5,
+            }}
+          >
+            {visibleEmployeesCount === 0 ? (
+              <Box sx={{ py: 4, textAlign: 'center' }}>
+                <Typography variant="subtitle1">
+                  Keine Mitarbeiter gefunden
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {hasActiveSearch ? 'Passen Sie den Suchbegriff an oder entfernen Sie den Filter.' : 'Legen Sie den ersten Mitarbeiter an, um die Liste zu füllen.'}
+                </Typography>
+              </Box>
+            ) : filteredEmployees.map((employee: any) => (
+              <Paper
+                key={employee.id}
+                variant="outlined"
+                sx={{
+                  p: 1.5,
+                  borderRadius: 2,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 1.5,
+                }}
+              >
+                <Box display="flex" alignItems="center" gap={1.5}>
+                  <Avatar
+                    src={(employee.photoPath ? (window as any)?.electronAPI?.toFileUrl?.(employee.photoPath) : employee.photoUrl) || undefined}
+                    sx={{ width: 40, height: 40, bgcolor: 'primary.main', fontSize: 15 }}
+                  >
+                    {(employee.firstName?.[0] || '') + (employee.lastName?.[0] || '')}
+                  </Avatar>
+                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                    <Typography variant="subtitle1" sx={{ lineHeight: 1.2 }}>
+                      {employee.firstName} {employee.lastName}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {employee.position || 'Mitarbeiter'}
+                    </Typography>
+                  </Box>
+                </Box>
+
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                  <Chip
+                    label={getOrganizationName(employee.organizationId)}
+                    size="small"
+                    sx={{
+                      backgroundColor: getOrganizationColor(employee.organizationId),
+                      color: 'white',
+                      fontWeight: 'bold',
+                    }}
+                  />
+                  {employee.department && <Chip label={employee.department} size="small" variant="outlined" />}
+                  <Chip
+                    label={typeof employee.weeklyHours === 'number' && !isNaN(employee.weeklyHours)
+                      ? `${employee.weeklyHours.toString().replace('.', ',')} Std/Woche`
+                      : 'Keine Wochenstunden'}
+                    size="small"
+                    variant="outlined"
+                  />
+                </Box>
+
+                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr', gap: 1 }}>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Kontakt</Typography>
+                    <Box display="flex" flexDirection="column" gap={0.5} mt={0.25}>
+                      {employee.email && (
+                        <Box display="flex" alignItems="center" gap={0.75}>
+                          <EmailIcon fontSize="small" color="action" />
+                          <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>{employee.email}</Typography>
+                        </Box>
+                      )}
+                      {employee.phone && (
+                        <Box display="flex" alignItems="center" gap={0.75}>
+                          <PhoneIcon fontSize="small" color="action" />
+                          <Typography variant="body2">{employee.phone}</Typography>
+                        </Box>
+                      )}
+                      {!employee.email && !employee.phone && (
+                        <Typography variant="body2" color="text.secondary">Keine Kontaktdaten</Typography>
+                      )}
+                    </Box>
+                  </Box>
+
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Beschäftigung</Typography>
+                    <Typography variant="body2">Eintritt: {formatEmployeeDate(employee.hireDate)}</Typography>
+                    <Typography variant="body2">Austritt: {formatEmployeeDate(employee.exitDate)}</Typography>
+                  </Box>
+
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Tagesplan</Typography>
+                    <Typography variant="body2" sx={{ mt: 0.25 }}>
+                      {formatDailyPlanSummary(employee.dailyHoursPlan)}
+                    </Typography>
+                  </Box>
+                </Box>
+
+                <Box display="flex" gap={1} justifyContent="flex-end">
+                  <Button size="small" startIcon={<EditIcon />} onClick={() => handleOpenDialog(employee)}>
+                    Bearbeiten
+                  </Button>
+                  <Button size="small" color="error" startIcon={<DeleteIcon />} onClick={() => handleDelete(employee.id)}>
+                    Löschen
+                  </Button>
+                </Box>
+              </Paper>
+            ))}
+          </Box>
+        ) : (
+        <TableContainer
+          component={Box}
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            maxHeight: isSmallScreen ? 'calc(100vh - 340px)' : 'calc(100vh - 300px)',
+            overflow: 'auto',
+            '&::-webkit-scrollbar': {
+              height: 12,
+              width: 12,
+            },
+            '&::-webkit-scrollbar-thumb': {
+              backgroundColor: 'action.selected',
+              borderRadius: 999,
+            },
+            '&::-webkit-scrollbar-track': {
+              backgroundColor: 'action.hover',
+            },
+          }}
+        >
+        <Table stickyHeader sx={{ minWidth: 1220 }}>
           <TableHead>
             <TableRow>
-              <TableCell>Name</TableCell>
-              <TableCell>Organisation</TableCell>
-              <TableCell>Position</TableCell>
-              <TableCell>Bereich</TableCell>
-              <TableCell>Kontakt</TableCell>
-              <TableCell>Eintrittsdatum</TableCell>
-              <TableCell>Wochenarbeitszeit</TableCell>
-              <TableCell>Tagesplan</TableCell>
-              <TableCell>Aktionen</TableCell>
+              <TableCell sx={{ minWidth: 220, whiteSpace: 'nowrap' }}>Name</TableCell>
+              <TableCell sx={{ minWidth: 180, whiteSpace: 'nowrap' }}>Organisation</TableCell>
+              <TableCell sx={{ minWidth: 140, whiteSpace: 'nowrap' }}>Position</TableCell>
+              <TableCell sx={{ minWidth: 140, whiteSpace: 'nowrap' }}>Bereich</TableCell>
+              <TableCell sx={{ minWidth: 220, whiteSpace: 'nowrap' }}>Kontakt</TableCell>
+              <TableCell sx={{ minWidth: 130, whiteSpace: 'nowrap' }}>Eintrittsdatum</TableCell>
+              <TableCell sx={{ minWidth: 130, whiteSpace: 'nowrap' }}>Austrittsdatum</TableCell>
+              <TableCell sx={{ minWidth: 160, whiteSpace: 'nowrap' }}>Wochenarbeitszeit</TableCell>
+              <TableCell sx={{ minWidth: 260, whiteSpace: 'nowrap' }}>Tagesplan</TableCell>
+              <TableCell
+                sx={{
+                  minWidth: 120,
+                  whiteSpace: 'nowrap',
+                  position: 'sticky',
+                  right: 0,
+                  zIndex: 3,
+                  backgroundColor: 'background.paper',
+                }}
+              >
+                Aktionen
+              </TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {filteredEmployees.map((employee: any) => (
+            {visibleEmployeesCount === 0 ? (
+              <TableRow>
+                <TableCell colSpan={10}>
+                  <Box sx={{ py: 4, textAlign: 'center' }}>
+                    <Typography variant="subtitle1">
+                      Keine Mitarbeiter gefunden
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {hasActiveSearch ? 'Passen Sie den Suchbegriff an oder entfernen Sie den Filter.' : 'Legen Sie den ersten Mitarbeiter an, um die Liste zu f\u00fcllen.'}
+                    </Typography>
+                  </Box>
+                </TableCell>
+              </TableRow>
+            ) : filteredEmployees.map((employee: any) => (
               <TableRow key={employee.id}>
-                <TableCell>
+                <TableCell sx={{ verticalAlign: 'top' }}>
                   <Box display="flex" alignItems="center" gap={1.5}>
                     <Avatar 
                       src={(employee.photoPath ? (window as any)?.electronAPI?.toFileUrl?.(employee.photoPath) : employee.photoUrl) || undefined}
@@ -403,12 +674,12 @@ const EmployeeList: React.FC = () => {
                     >
                       {(employee.firstName?.[0] || '') + (employee.lastName?.[0] || '')}
                     </Avatar>
-                    <Typography variant="subtitle2">
+                    <Typography variant="subtitle2" sx={{ whiteSpace: 'normal' }}>
                       {employee.firstName} {employee.lastName}
                     </Typography>
                   </Box>
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ verticalAlign: 'top' }}>
                   <Chip 
                     label={getOrganizationName(employee.organizationId)} 
                     size="small"
@@ -422,14 +693,14 @@ const EmployeeList: React.FC = () => {
                     }}
                   />
                 </TableCell>
-                <TableCell>{employee.position}</TableCell>
-                <TableCell>{employee.department}</TableCell>
-                <TableCell>
+                <TableCell sx={{ verticalAlign: 'top' }}>{employee.position}</TableCell>
+                <TableCell sx={{ verticalAlign: 'top' }}>{employee.department}</TableCell>
+                <TableCell sx={{ verticalAlign: 'top' }}>
                   <Box display="flex" flexDirection="column" gap={0.5}>
                     {employee.email && (
                       <Box display="flex" alignItems="center" gap={0.5}>
                         <EmailIcon fontSize="small" color="action" />
-                        <Typography variant="body2">{employee.email}</Typography>
+                        <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>{employee.email}</Typography>
                       </Box>
                     )}
                     {employee.phone && (
@@ -440,20 +711,30 @@ const EmployeeList: React.FC = () => {
                     )}
                   </Box>
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>
                   {employee.hireDate ? new Date(employee.hireDate).toLocaleDateString('de-DE') : '-'}
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>
+                  {employee.exitDate ? new Date(employee.exitDate).toLocaleDateString('de-DE') : '-'}
+                </TableCell>
+                <TableCell sx={{ verticalAlign: 'top', whiteSpace: 'nowrap' }}>
                   {typeof employee.weeklyHours === 'number' && !isNaN(employee.weeklyHours)
                     ? `${employee.weeklyHours.toString().replace('.', ',')} Std`
                     : '—'}
                 </TableCell>
-                <TableCell>
-                  <Typography variant="body2">
+                <TableCell sx={{ verticalAlign: 'top' }}>
+                  <Typography variant="body2" sx={{ whiteSpace: 'normal' }}>
                     {formatDailyPlanSummary(employee.dailyHoursPlan)}
                   </Typography>
                 </TableCell>
-                <TableCell>
+                <TableCell
+                  sx={{
+                    verticalAlign: 'top',
+                    position: 'sticky',
+                    right: 0,
+                    backgroundColor: 'background.paper',
+                  }}
+                >
                   <Box display="flex" gap={1}>
                     <IconButton
                       size="small"
@@ -475,7 +756,9 @@ const EmployeeList: React.FC = () => {
             ))}
           </TableBody>
         </Table>
-      </TableContainer>
+        </TableContainer>
+        )}
+      </Paper>
 
       {/* Dialog für Mitarbeiter erstellen/bearbeiten */}
       <Dialog 
@@ -646,6 +929,19 @@ const EmployeeList: React.FC = () => {
               sx={{
                 '& .MuiSvgIcon-root': { 
                   color: (theme) => theme.palette.mode === 'dark' ? 'white' : 'inherit' 
+                }
+              }}
+            />
+            <TextField
+              label="Austrittsdatum"
+              type="date"
+              value={formData.exitDate}
+              onChange={handleInputChange('exitDate')}
+              InputLabelProps={{ shrink: true }}
+              fullWidth
+              sx={{
+                '& .MuiSvgIcon-root': {
+                  color: (theme) => theme.palette.mode === 'dark' ? 'white' : 'inherit'
                 }
               }}
             />

@@ -51,6 +51,38 @@ import { format, isThisWeek, addDays } from 'date-fns';
 import { saveDashboardExcel, saveWeekExcel, buildWeekExcelFromShifts } from '../../utils/excelExport';
 import { de } from 'date-fns/locale';
 
+const parseLocalDate = (value?: string | Date | null) => {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  }
+
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+};
+
+const parseEmploymentDate = (value?: string) => {
+  return parseLocalDate(value);
+};
+
+const isEmployeeActiveInRange = (employee: any, startDate: Date, endDate: Date) => {
+  const hireDate = parseEmploymentDate(employee?.hireDate);
+  const exitDate = parseEmploymentDate(employee?.exitDate);
+  const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+
+  if (hireDate && hireDate > end) return false;
+  if (exitDate && exitDate < start) return false;
+
+  return true;
+};
+
 const DashboardComponent: React.FC = () => {
   const dispatch = useAppDispatch();
   
@@ -119,13 +151,15 @@ const DashboardComponent: React.FC = () => {
 
   // Statistiken berechnen
   const todayShifts = filteredShifts.filter((shift: any) => {
-    const shiftDate = new Date(shift.date);
+    const shiftDate = parseLocalDate(shift.date);
     const today = new Date();
+    if (!shiftDate) return false;
     return format(shiftDate, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd');
   });
 
   const weekShifts = filteredShifts.filter((shift: any) => {
-    const shiftDate = new Date(shift.date);
+    const shiftDate = parseLocalDate(shift.date);
+    if (!shiftDate) return false;
     return isThisWeek(shiftDate, { weekStartsOn: 1 });
   });
 
@@ -149,12 +183,17 @@ const DashboardComponent: React.FC = () => {
   // Kommende Schichten (nächste 7 Tage)
   const upcomingShifts = filteredShifts
     .filter((shift: any) => {
-      const shiftDate = new Date(shift.date);
-      const today = new Date();
-      const nextWeek = addDays(today, 7);
+      const shiftDate = parseLocalDate(shift.date);
+      const today = parseLocalDate(new Date());
+      const nextWeek = today ? addDays(today, 7) : null;
+      if (!shiftDate || !today || !nextWeek) return false;
       return shiftDate >= today && shiftDate <= nextWeek;
     })
-    .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())
+    .sort((a: any, b: any) => {
+      const left = parseLocalDate(a.date)?.getTime() ?? 0;
+      const right = parseLocalDate(b.date)?.getTime() ?? 0;
+      return left - right;
+    })
     .slice(0, 10);
 
   // Erweiterte Excel Export Funktion
@@ -187,8 +226,8 @@ const DashboardComponent: React.FC = () => {
         endDate = new Date(today.getFullYear(), 11, 31);
         break;
       case 'custom':
-        startDate = new Date(exportSettings.customStartDate);
-        endDate = new Date(exportSettings.customEndDate);
+        startDate = parseLocalDate(exportSettings.customStartDate) || new Date(exportSettings.customStartDate);
+        endDate = parseLocalDate(exportSettings.customEndDate) || new Date(exportSettings.customEndDate);
         break;
       default:
         startDate = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -200,14 +239,16 @@ const DashboardComponent: React.FC = () => {
 
   const handleAdvancedExport = async () => {
     const { startDate, endDate } = calculateDateRange();
+    const normalizedStartDate = parseLocalDate(startDate) || startDate;
+    const normalizedEndDate = parseLocalDate(endDate) || endDate;
     
   // console debug removed
     
     // Lade ALLE notwendigen Daten für den Export
     await Promise.all([
       dispatch(fetchShifts({
-        startDate: format(startDate, 'yyyy-MM-dd'),
-        endDate: format(endDate, 'yyyy-MM-dd')
+        startDate: format(normalizedStartDate, 'yyyy-MM-dd'),
+        endDate: format(normalizedEndDate, 'yyyy-MM-dd')
       })),
       dispatch(fetchEmployees()),
       dispatch(fetchShiftTypes()),
@@ -222,13 +263,20 @@ const DashboardComponent: React.FC = () => {
     const latestShifts = currentState?.shifts?.shifts || shifts || [];
     const latestEmployees = currentState?.employees?.employees || employees || [];
     const latestShiftTypes = currentState?.shiftTypes?.shiftTypes || shiftTypes || [];
+
+    const exportEmployees = latestEmployees.filter((emp: any) => {
+      const employeeOrgId = (emp.organizationId || emp.organization_id)?.toString?.();
+      const selectedOrgId = selectedOrganization?.id?.toString?.();
+      const inOrg = !selectedOrgId || employeeOrgId === selectedOrgId;
+      return inOrg && isEmployeeActiveInRange(emp, normalizedStartDate, normalizedEndDate);
+    });
     
     // console debug removed
     
     // Filtere Schichten nach Zeitraum und Organisation
     const timeRangeShifts = latestShifts.filter((shift: any) => {
-      const shiftDate = new Date(shift.date);
-      const inTimeRange = shiftDate >= startDate && shiftDate <= endDate;
+      const shiftDate = parseLocalDate(shift.date);
+      const inTimeRange = !!shiftDate && shiftDate >= normalizedStartDate && shiftDate <= normalizedEndDate;
       const inOrg = !selectedOrganization || 
         shift.organizationId === selectedOrganization.id || 
         shift.organization_id === selectedOrganization.id;
@@ -242,10 +290,10 @@ const DashboardComponent: React.FC = () => {
       metadata: {
         organization: selectedOrganization?.name || 'Alle Organisationen',
         exportDate: format(new Date(), 'dd.MM.yyyy HH:mm'),
-        timeRange: `${format(startDate, 'dd.MM.yyyy')} - ${format(endDate, 'dd.MM.yyyy')}`,
+        timeRange: `${format(normalizedStartDate, 'dd.MM.yyyy')} - ${format(normalizedEndDate, 'dd.MM.yyyy')}`,
         totalRecords: {
           shifts: timeRangeShifts.length,
-          employees: latestEmployees.length,
+          employees: exportEmployees.length,
           shiftTypes: latestShiftTypes.length,
           organizations: (organizations || []).length
         }
@@ -262,7 +310,7 @@ const DashboardComponent: React.FC = () => {
         assignedShifts: assignedShifts.length,
         unassignedShifts: unassignedShifts.length,
         assignmentRate: timeRangeShifts.length > 0 ? Math.round((assignedShifts.length / timeRangeShifts.length) * 100) : 0,
-        employees: filteredEmployees.length,
+        employees: exportEmployees.length,
         organizations: (organizations || []).length,
         shiftTypes: (shiftTypes || []).length
       };
@@ -283,7 +331,7 @@ const DashboardComponent: React.FC = () => {
 
     // Mitarbeiter
     if (exportSettings.includeEmployees) {
-      exportData.employees = latestEmployees.map((emp: any) => ({
+      exportData.employees = exportEmployees.map((emp: any) => ({
         id: emp.id,
         firstName: emp.firstName || emp.first_name,
         lastName: emp.lastName || emp.last_name,
@@ -323,11 +371,12 @@ const DashboardComponent: React.FC = () => {
         const employee = latestEmployees.find((emp: any) => emp.id === (shift.employeeId || shift.employee_id));
         const shiftType = latestShiftTypes.find((st: any) => st.id === (shift.shiftTypeId || shift.shift_type_id));
         const organization = (organizations || []).find((org: any) => org.id === (shift.organizationId || shift.organization_id));
+        const shiftDate = parseLocalDate(shift.date) || new Date(shift.date);
         
         return {
           id: shift.id,
-          date: format(new Date(shift.date), 'dd.MM.yyyy'),
-          weekday: format(new Date(shift.date), 'EEEE', { locale: de }),
+          date: format(shiftDate, 'dd.MM.yyyy'),
+          weekday: format(shiftDate, 'EEEE', { locale: de }),
           startTime: shift.startTime || shift.start_time,
           endTime: shift.endTime || shift.end_time,
           duration: (shift.startTime || shift.start_time) && (shift.endTime || shift.end_time) ? 
@@ -394,7 +443,8 @@ const DashboardComponent: React.FC = () => {
     const latestShiftTypes = state?.shiftTypes?.shiftTypes || shiftTypes || [];
 
     const weekShifts = latestShifts.filter((shift: any) => {
-      const sd = new Date(shift.date);
+      const sd = parseLocalDate(shift.date);
+      if (!sd) return false;
       return sd >= dates[0] && sd <= dates[6] && (
         !selectedOrganization ||
         shift.organizationId === selectedOrganization.id ||
@@ -406,7 +456,12 @@ const DashboardComponent: React.FC = () => {
   latestShiftTypes.forEach((st: any) => { shiftTypeMap[st.id] = st; });
 
     // Mitarbeiterliste ggf. auf gewählte Organisation filtern
-    const exportEmployees = latestEmployees.filter((emp: any) => !selectedOrganization || (emp.organizationId || emp.organization_id) === selectedOrganization.id);
+    const exportEmployees = latestEmployees.filter((emp: any) => {
+      const employeeOrgId = (emp.organizationId || emp.organization_id)?.toString?.();
+      const selectedOrgId = selectedOrganization?.id?.toString?.();
+      const inOrg = !selectedOrgId || employeeOrgId === selectedOrgId;
+      return inOrg && isEmployeeActiveInRange(emp, dates[0], dates[6]);
+    });
 
     // Daten in das Wochenexport-Format überführen
     const excelData = buildWeekExcelFromShifts({

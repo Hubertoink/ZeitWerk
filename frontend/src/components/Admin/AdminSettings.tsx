@@ -275,6 +275,21 @@ const AdminSettings: React.FC<AdminSettingsProps> = ({ onSettingsChange }) => {
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
               Bestimmt wie viele Tage in der Wochenansicht angezeigt werden.
             </Typography>
+
+            <Divider sx={{ my: 2 }} />
+
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={settings.ui.weekSlideAnimation !== false}
+                  onChange={(e) => handleSettingChange('ui', 'weekSlideAnimation', e.target.checked)}
+                />
+              }
+              label="Slide-Animation beim Wochenwechsel"
+            />
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Zeigt beim Navigieren zwischen Wochen eine sanfte Slide-Animation an.
+            </Typography>
           </CardContent>
         </Card>
       </Grid>

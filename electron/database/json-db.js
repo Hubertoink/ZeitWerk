@@ -53,7 +53,9 @@ class JsonDatabase {
         this.data = {
             employees: [],
             shifts: [],
+            tasks: [],
             shiftTypes: [],
+            taskTypes: [],
             organizations: [],
             users: [],
             holidays: [],
@@ -85,7 +87,9 @@ class JsonDatabase {
                 this.data = {
                     employees: loadedData.employees || [],
                     shifts: loadedData.shifts || [],
+                    tasks: loadedData.tasks || [],
                     shiftTypes: loadedData.shiftTypes || [],
+                    taskTypes: loadedData.taskTypes || [],
                     organizations: loadedData.organizations || [],
                     users: loadedData.users || [],
                     holidays: loadedData.holidays || [],
@@ -108,7 +112,9 @@ class JsonDatabase {
             this.data = {
                 employees: [],
                 shifts: [],
+                tasks: [],
                 shiftTypes: [],
+                taskTypes: [],
                 organizations: [],
                 users: [],
                 holidays: [],
@@ -199,6 +205,17 @@ class JsonDatabase {
             ];
         }
 
+        if (this.data.taskTypes.length === 0) {
+            console.log('🌱 Standard-Aufgabentypen werden erstellt...');
+            this.data.taskTypes = [
+                { id: 1, name: 'Öffnung vorbereiten', color: '#5C6BC0', description: 'Materialien und Räume vorbereiten', organizationId: 1, isActive: true },
+                { id: 2, name: 'Empfang', color: '#26A69A', description: 'Besucher begrüßen und erste Fragen klären', organizationId: 1, isActive: true },
+                { id: 3, name: 'Thekendienst', color: '#FFA726', description: 'Ausgabe und Ansprechbarkeit im offenen Bereich', organizationId: 1, isActive: true },
+                { id: 4, name: 'Dokumentation', color: '#8D6E63', description: 'Vorkommnisse und Teilnahme dokumentieren', organizationId: 1, isActive: true },
+                { id: 5, name: 'Nachbereitung', color: '#EF5350', description: 'Abschluss, Aufräumen und Übergabe', organizationId: 1, isActive: true }
+            ];
+        }
+
         if (this.data.employees.length === 0) {
             console.log('🌱 Initiale Daten werden erstellt...');
 
@@ -269,6 +286,9 @@ class JsonDatabase {
             // Initiale Schichten: KEINE automatischen Schichten beim Reset
             this.data.shifts = [];
 
+            // Initiale Aufgaben: KEINE automatischen Zuteilungen beim Reset
+            this.data.tasks = [];
+
             // Admin-User
             this.data.users = [
                 {
@@ -318,11 +338,27 @@ class JsonDatabase {
         }
         // Abwesenheiten (Urlaub, Krankheit) können über reguläre Schichten gelegt werden.
       }
+
+            if (table === 'tasks') {
+                const duplicateTask = this.data.tasks.find(task => {
+                    return task.employeeId === item.employeeId &&
+                                 task.date === item.date &&
+                                 task.taskTypeId === item.taskTypeId;
+                });
+
+                if (duplicateTask) {
+                    throw new Error('Diese Aufgabe ist für diesen Mitarbeiter an diesem Tag bereits zugeteilt.');
+                }
+            }
       
       const newItem = {
         id: this.generateId(table),
         ...item
       };
+
+            if (table === 'tasks') {
+                newItem.time = typeof newItem.time === 'string' ? newItem.time : '';
+            }
       
       this.data[table].push(newItem);
       this.save();
@@ -365,6 +401,11 @@ class JsonDatabase {
         }
 
         this.data[table][index] = { ...this.data[table][index], ...updates };
+        if (table === 'tasks') {
+            this.data[table][index].time = typeof this.data[table][index].time === 'string'
+                ? this.data[table][index].time
+                : '';
+        }
         this.save();
         return this.data[table][index];
     }
@@ -404,12 +445,33 @@ class JsonDatabase {
         });
     }
 
+    getTasksByDateRange(startDate, endDate, organizationId) {
+        return this.data.tasks.filter(task => {
+            const taskDate = task.date;
+            const inRange = taskDate >= startDate && taskDate <= endDate;
+            const inOrg = !organizationId || task.organizationId === organizationId;
+            return inRange && inOrg;
+        });
+    }
+
+    getEmployeeTasks(employeeId, startDate, endDate) {
+        return this.data.tasks.filter(task => {
+            const taskDate = task.date;
+            const isEmployee = task.employeeId === parseInt(employeeId);
+            const inRange = (!startDate || taskDate >= startDate) &&
+                           (!endDate || taskDate <= endDate);
+            return isEmployee && inRange;
+        });
+    }
+
     // Statistiken
     getStats() {
         return {
             employees: this.data.employees.length,
             shifts: this.data.shifts.length,
+            tasks: this.data.tasks.length,
             shiftTypes: this.data.shiftTypes.length,
+            taskTypes: this.data.taskTypes.length,
             organizations: this.data.organizations.length,
             users: this.data.users.length,
             dbPath: this.dbPath,
@@ -494,6 +556,11 @@ class JsonDatabase {
                 }
             }
 
+            backupData.tasks = Array.isArray(backupData.tasks) ? backupData.tasks : [];
+            backupData.taskTypes = Array.isArray(backupData.taskTypes) ? backupData.taskTypes : [];
+            backupData.holidays = Array.isArray(backupData.holidays) ? backupData.holidays : [];
+            backupData.holidayCacheInfo = Array.isArray(backupData.holidayCacheInfo) ? backupData.holidayCacheInfo : [];
+
             // Daten importieren
             this.data = backupData;
             this.save();
@@ -517,7 +584,9 @@ class JsonDatabase {
         this.data = {
             employees: [],
             shifts: [],
+            tasks: [],
             shiftTypes: [],
+            taskTypes: [],
             organizations: [],
             users: [],
             holidays: [],

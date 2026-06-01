@@ -46,6 +46,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteShift: (id) => ipcRenderer.invoke('shifts:delete', id),
   getShiftsByEmployee: (employeeId, start, end) => ipcRenderer.invoke('shifts:getByEmployee', employeeId, start, end),
 
+  // Tasks
+  getTasks: (filters) => ipcRenderer.invoke('tasks:getAll', filters || {}),
+  getTaskById: (id) => ipcRenderer.invoke('tasks:getById', id),
+  createTask: (task) => ipcRenderer.invoke('tasks:create', task),
+  updateTask: (id, updates) => ipcRenderer.invoke('tasks:update', id, updates),
+  deleteTask: (id) => ipcRenderer.invoke('tasks:delete', id),
+  getTasksByEmployee: (employeeId, start, end) => ipcRenderer.invoke('tasks:getByEmployee', employeeId, start, end),
+
+  // Task Types
+  getTaskTypes: (organizationId) => ipcRenderer.invoke('task-types:getAll', organizationId),
+  getTaskTypeById: (id) => ipcRenderer.invoke('task-types:getById', id),
+  createTaskType: (taskType) => ipcRenderer.invoke('task-types:create', taskType),
+  updateTaskType: (id, updates) => ipcRenderer.invoke('task-types:update', id, updates),
+  deleteTaskType: (id) => ipcRenderer.invoke('task-types:delete', id),
+
   // DB utilities
   getDatabaseStats: () => ipcRenderer.invoke('db:stats'),
   getShiftYears: () => ipcRenderer.invoke('db:getShiftYears'),

@@ -13,6 +13,7 @@ export interface EmployeeCreateData {
   position?: string;
   department?: string;
   hireDate?: string;
+  exitDate?: string;
   organizationId: string;
   isActive?: boolean;
   notes?: string;
@@ -39,6 +40,7 @@ export interface EmployeeUpdateData {
   position?: string;
   department?: string;
   hireDate?: string;
+  exitDate?: string;
   organizationId?: string;
   isActive?: boolean;
   notes?: string;

@@ -27,6 +27,7 @@ import {
   People as PeopleIcon,
   Business as BusinessIcon,
   Schedule as ScheduleIcon,
+  AssignmentTurnedIn as TaskIcon,
   AdminPanelSettings as AdminIcon,
   ChevronLeft as ChevronLeftIcon,
   ExpandLess,
@@ -75,6 +76,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       const palette = theme.palette;
       if (id === 'dashboard') return palette.primary.main;
       if (id === 'calendar' || id === 'week-view' || id === 'month-view') return palette.info.main;
+      if (id === 'tasks') return palette.info.dark;
       if (id === 'employees' || id === 'organizations') return palette.success.main;
       if (id === 'shift-types') return palette.secondary.main;
       if (id === 'admin') return palette.warning.main;
@@ -123,6 +125,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       subItems: [
         { text: 'Wochenansicht', path: '/week', icon: <WeekIcon /> },
         { text: 'Monatsansicht', path: '/month', icon: <MonthIcon /> },
+        { text: 'Aufgaben', path: '/tasks', icon: <TaskIcon /> },
       ]
     }]),
     // In collapsed Mode: Direkte Kalender-Optionen
@@ -138,6 +141,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         path: '/month', 
         icon: <MonthIcon />,
         id: 'month-view'
+      },
+      {
+        text: 'Aufgaben',
+        path: '/tasks',
+        icon: <TaskIcon />,
+        id: 'tasks'
       }
     ] : []),
     { 

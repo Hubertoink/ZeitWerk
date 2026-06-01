@@ -19,12 +19,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getShiftsByEmployee: (employeeId, startDate, endDate) => 
     ipcRenderer.invoke('shifts:getByEmployee', employeeId, startDate, endDate),
 
+  // Task operations
+  getTasks: (filters) => ipcRenderer.invoke('tasks:getAll', filters),
+  getTaskById: (id) => ipcRenderer.invoke('tasks:getById', id),
+  createTask: (task) => ipcRenderer.invoke('tasks:create', task),
+  updateTask: (id, updates) => ipcRenderer.invoke('tasks:update', id, updates),
+  deleteTask: (id) => ipcRenderer.invoke('tasks:delete', id),
+  getTasksByEmployee: (employeeId, startDate, endDate) =>
+    ipcRenderer.invoke('tasks:getByEmployee', employeeId, startDate, endDate),
+
   // ShiftType operations
   getShiftTypes: (organizationId) => ipcRenderer.invoke('shift-types:getAll', organizationId),
   getShiftTypeById: (id) => ipcRenderer.invoke('shift-types:getById', id),
   createShiftType: (shiftType) => ipcRenderer.invoke('shift-types:create', shiftType),
   updateShiftType: (id, updates) => ipcRenderer.invoke('shift-types:update', id, updates),
   deleteShiftType: (id) => ipcRenderer.invoke('shift-types:delete', id),
+
+  // TaskType operations
+  getTaskTypes: (organizationId) => ipcRenderer.invoke('task-types:getAll', organizationId),
+  getTaskTypeById: (id) => ipcRenderer.invoke('task-types:getById', id),
+  createTaskType: (taskType) => ipcRenderer.invoke('task-types:create', taskType),
+  updateTaskType: (id, updates) => ipcRenderer.invoke('task-types:update', id, updates),
+  deleteTaskType: (id) => ipcRenderer.invoke('task-types:delete', id),
 
   // Organization operations
   getOrganizations: () => ipcRenderer.invoke('db:getOrganizations'),

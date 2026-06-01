@@ -1,5 +1,5 @@
 // API Service - Final Working Version
-import { Employee, ShiftType, Shift, OrganizationUnit } from '../types';
+import { Employee, ShiftType, Shift, OrganizationUnit, Task, TaskType } from '../types';
 
 // Check if we're running in Electron
 const isElectronApp = (): boolean => {
@@ -14,6 +14,7 @@ class APIService {
   // Simple in-memory caches to reduce repeated IPC calls (Electron only)
   private _cacheEmployees: { data: Employee[]; ts: number } | null = null;
   private _cacheShiftTypes: { data: ShiftType[]; ts: number } | null = null;
+  private _cacheTaskTypes: { data: TaskType[]; ts: number } | null = null;
   private _cacheTTLms = 60_000; // 60s TTL
 
   private isCacheValid(entry: { ts: number } | null): boolean {
@@ -38,6 +39,7 @@ class APIService {
         position: emp.position || '',
         department: emp.department || '',
         hireDate: emp.hireDate || new Date().toISOString(),
+        exitDate: emp.exitDate || undefined,
         organizationId: emp.organizationId.toString(),
         isActive: emp.isActive,
         notes: emp.notes || '',
@@ -85,6 +87,30 @@ class APIService {
     if (!response.ok) throw new Error('Failed to fetch shift types');
     return await response.json();
   }
+
+  private async getTaskTypesCached(): Promise<TaskType[]> {
+    if (isElectronApp()) {
+      if (this.isCacheValid(this._cacheTaskTypes)) {
+        return this._cacheTaskTypes!.data;
+      }
+      const rawTaskTypes = await (window as any).electronAPI.getTaskTypes();
+      const mapped: TaskType[] = rawTaskTypes.map((type: any) => ({
+        id: type.id.toString(),
+        name: type.name,
+        color: type.color,
+        description: type.description || '',
+        organizationId: type.organizationId ? type.organizationId.toString() : null,
+        isActive: type.isActive !== false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }));
+      this._cacheTaskTypes = { data: mapped, ts: Date.now() };
+      return mapped;
+    }
+    const response = await fetch(`${API_BASE}/task-types`);
+    if (!response.ok) throw new Error('Failed to fetch task types');
+    return await response.json();
+  }
   
   async getOrganizations(): Promise<OrganizationUnit[]> {
     if (isElectronApp()) {
@@ -125,6 +151,7 @@ class APIService {
         position: emp.position || '',
         department: emp.department || '',
         hireDate: emp.hireDate || new Date().toISOString(),
+        exitDate: emp.exitDate || undefined,
         organizationId: emp.organizationId.toString(),
         isActive: emp.isActive,
         notes: emp.notes || '',
@@ -246,6 +273,7 @@ class APIService {
         position: employee.position,
         department: employee.department,
         hireDate: employee.hireDate,
+        exitDate: employee.exitDate,
         organizationId: parseInt(employee.organizationId),
         isActive: employee.isActive,
         notes: (employee as any).notes,
@@ -267,6 +295,7 @@ class APIService {
         position: rawEmp.position || '',
         department: rawEmp.department || '',
         hireDate: rawEmp.hireDate || new Date().toISOString(),
+        exitDate: rawEmp.exitDate || undefined,
         organizationId: rawEmp.organizationId.toString(),
         isActive: rawEmp.isActive,
         notes: rawEmp.notes || '',
@@ -298,7 +327,8 @@ class APIService {
   if ((employee as any).photoPath !== undefined) empToUpdate.photoPath = (employee as any).photoPath;
       if (employee.position) empToUpdate.position = employee.position;
       if (employee.department) empToUpdate.department = employee.department;
-      if (employee.hireDate) empToUpdate.hireDate = employee.hireDate;
+      if (employee.hireDate !== undefined) empToUpdate.hireDate = employee.hireDate;
+      if (employee.exitDate !== undefined) empToUpdate.exitDate = employee.exitDate;
       if (employee.organizationId) empToUpdate.organizationId = parseInt(employee.organizationId);
       if (employee.isActive !== undefined) empToUpdate.isActive = employee.isActive;
       if ((employee as any).notes !== undefined) empToUpdate.notes = (employee as any).notes;
@@ -319,6 +349,7 @@ class APIService {
         position: rawEmp.position || '',
         department: rawEmp.department || '',
         hireDate: rawEmp.hireDate || new Date().toISOString(),
+        exitDate: rawEmp.exitDate || undefined,
         organizationId: rawEmp.organizationId.toString(),
         isActive: rawEmp.isActive,
         notes: rawEmp.notes || '',
@@ -393,6 +424,8 @@ class APIService {
         priority: shiftType.priority || 1,
         isActive: shiftType.isActive
       };
+
+      this._cacheShiftTypes = null;
       
       const rawType = await (window as any).electronAPI.createShiftType(typeToCreate);
       
@@ -439,6 +472,8 @@ class APIService {
       if (shiftType.category) typeToUpdate.category = shiftType.category;
       if (shiftType.priority) typeToUpdate.priority = shiftType.priority;
       if (shiftType.isActive !== undefined) typeToUpdate.isActive = shiftType.isActive;
+
+      this._cacheShiftTypes = null;
       
       const rawType = await (window as any).electronAPI.updateShiftType(parseInt(id), typeToUpdate);
       
@@ -472,6 +507,7 @@ class APIService {
 
   async deleteShiftType(id: string): Promise<void> {
     if (isElectronApp()) {
+      this._cacheShiftTypes = null;
       await (window as any).electronAPI.deleteShiftType(parseInt(id));
     } else {
       const response = await fetch(`${API_BASE}/shift-types/${id}`, {
@@ -479,6 +515,97 @@ class APIService {
       });
       if (!response.ok) throw new Error('Failed to delete shift type');
     }
+  }
+
+  // TaskType Methods
+  async getTaskTypes(): Promise<TaskType[]> {
+    if (isElectronApp()) {
+      return await this.getTaskTypesCached();
+    }
+
+    const response = await fetch(`${API_BASE}/task-types`);
+    if (!response.ok) throw new Error('Failed to fetch task types');
+    return await response.json();
+  }
+
+  async createTaskType(taskType: Omit<TaskType, 'id' | 'createdAt' | 'updatedAt'>): Promise<TaskType> {
+    if (isElectronApp()) {
+      const typeToCreate = {
+        name: taskType.name,
+        color: taskType.color,
+        description: taskType.description || '',
+        organizationId: taskType.organizationId ? parseInt(taskType.organizationId) : null,
+        isActive: taskType.isActive
+      };
+
+      this._cacheTaskTypes = null;
+      const rawType = await (window as any).electronAPI.createTaskType(typeToCreate);
+
+      return {
+        id: rawType.id.toString(),
+        name: rawType.name,
+        color: rawType.color,
+        description: rawType.description || '',
+        organizationId: rawType.organizationId ? rawType.organizationId.toString() : null,
+        isActive: rawType.isActive !== false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    }
+
+    const response = await fetch(`${API_BASE}/task-types`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(taskType)
+    });
+    if (!response.ok) throw new Error('Failed to create task type');
+    return await response.json();
+  }
+
+  async updateTaskType(id: string, taskType: Partial<TaskType>): Promise<TaskType> {
+    if (isElectronApp()) {
+      const typeToUpdate: any = {};
+      if (taskType.name) typeToUpdate.name = taskType.name;
+      if (taskType.color) typeToUpdate.color = taskType.color;
+      if (taskType.description !== undefined) typeToUpdate.description = taskType.description;
+      if (taskType.organizationId !== undefined) typeToUpdate.organizationId = taskType.organizationId ? parseInt(taskType.organizationId) : null;
+      if (taskType.isActive !== undefined) typeToUpdate.isActive = taskType.isActive;
+
+      this._cacheTaskTypes = null;
+      const rawType = await (window as any).electronAPI.updateTaskType(parseInt(id), typeToUpdate);
+
+      return {
+        id: rawType.id.toString(),
+        name: rawType.name,
+        color: rawType.color,
+        description: rawType.description || '',
+        organizationId: rawType.organizationId ? rawType.organizationId.toString() : null,
+        isActive: rawType.isActive !== false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    }
+
+    const response = await fetch(`${API_BASE}/task-types/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(taskType)
+    });
+    if (!response.ok) throw new Error('Failed to update task type');
+    return await response.json();
+  }
+
+  async deleteTaskType(id: string): Promise<void> {
+    if (isElectronApp()) {
+      this._cacheTaskTypes = null;
+      await (window as any).electronAPI.deleteTaskType(parseInt(id));
+      return;
+    }
+
+    const response = await fetch(`${API_BASE}/task-types/${id}`, {
+      method: 'DELETE'
+    });
+    if (!response.ok) throw new Error('Failed to delete task type');
   }
 
   // Shift Methods
@@ -524,6 +651,127 @@ class APIService {
       if (!response.ok) throw new Error('Failed to fetch shifts');
       return await response.json();
     }
+  }
+
+  // Task Methods
+  async getTasks(filters: { startDate?: string; endDate?: string; employeeId?: number; organizationId?: number | string } = {}): Promise<Task[]> {
+    if (isElectronApp()) {
+      const rawTasks = await (window as any).electronAPI.getTasks(filters);
+      const rawTaskTypes = await this.getTaskTypesCached();
+      const rawEmployees = await this.getEmployeesCached();
+
+      return rawTasks.map((task: any) => {
+        const taskTypeId = task.taskTypeId || task.task_type_id;
+        const employeeId = task.employeeId || task.employee_id;
+        const organizationId = task.organizationId || task.organization_id;
+        const taskType = (rawTaskTypes as any[]).find((tt: any) => (tt.id === (taskTypeId?.toString?.() || taskTypeId)) || (tt.id?.toString?.() === taskTypeId?.toString?.()));
+        const employee = (rawEmployees as any[]).find((emp: any) => (emp.id === (employeeId?.toString?.() || employeeId)) || (emp.id?.toString?.() === employeeId?.toString?.()));
+
+        return {
+          id: task.id ? task.id.toString() : '',
+          date: task.date || '',
+          time: task.time || '',
+          employeeId: employeeId ? employeeId.toString() : '',
+          taskTypeId: taskTypeId ? taskTypeId.toString() : '',
+          organizationId: organizationId ? organizationId.toString() : '',
+          notes: task.notes || '',
+          taskTypeName: taskType?.name || 'Aufgabe',
+          taskTypeColor: taskType?.color || '#cccccc',
+          employeeName: employee ? `${employee.firstName} ${employee.lastName}` : 'Unbekannt',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+      });
+    }
+
+    const queryParams = new URLSearchParams();
+    if (filters.startDate) queryParams.set('startDate', filters.startDate);
+    if (filters.endDate) queryParams.set('endDate', filters.endDate);
+    if (filters.employeeId) queryParams.set('employeeId', String(filters.employeeId));
+    if (filters.organizationId) queryParams.set('organizationId', String(filters.organizationId));
+    const url = queryParams.toString() ? `${API_BASE}/tasks?${queryParams}` : `${API_BASE}/tasks`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Failed to fetch tasks');
+    return await response.json();
+  }
+
+  async createTask(task: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'taskTypeName' | 'taskTypeColor' | 'employeeName'>): Promise<Task> {
+    if (isElectronApp()) {
+      const taskToCreate = {
+        date: task.date,
+        time: task.time || '',
+        employeeId: task.employeeId ? parseInt(task.employeeId) : null,
+        taskTypeId: parseInt(task.taskTypeId),
+        organizationId: parseInt(task.organizationId),
+        notes: task.notes || ''
+      };
+
+      const rawTask = await (window as any).electronAPI.createTask(taskToCreate);
+      return {
+        id: rawTask.id.toString(),
+        date: rawTask.date,
+        time: rawTask.time || '',
+        employeeId: rawTask.employeeId ? rawTask.employeeId.toString() : '',
+        taskTypeId: rawTask.taskTypeId.toString(),
+        organizationId: rawTask.organizationId.toString(),
+        notes: rawTask.notes || '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    }
+
+    const response = await fetch(`${API_BASE}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(task)
+    });
+    if (!response.ok) throw new Error('Failed to create task');
+    return await response.json();
+  }
+
+  async updateTask(id: string, task: Partial<Task>): Promise<Task> {
+    if (isElectronApp()) {
+      const taskToUpdate: any = {};
+      if (task.date) taskToUpdate.date = task.date;
+      if (task.time !== undefined) taskToUpdate.time = task.time;
+      if (task.employeeId !== undefined) taskToUpdate.employeeId = task.employeeId ? parseInt(task.employeeId) : null;
+      if (task.taskTypeId) taskToUpdate.taskTypeId = parseInt(task.taskTypeId);
+      if (task.organizationId) taskToUpdate.organizationId = parseInt(task.organizationId);
+      if (task.notes !== undefined) taskToUpdate.notes = task.notes;
+
+      const rawTask = await (window as any).electronAPI.updateTask(parseInt(id), taskToUpdate);
+      return {
+        id: rawTask.id.toString(),
+        date: rawTask.date,
+        time: rawTask.time || '',
+        employeeId: rawTask.employeeId ? rawTask.employeeId.toString() : '',
+        taskTypeId: rawTask.taskTypeId.toString(),
+        organizationId: rawTask.organizationId.toString(),
+        notes: rawTask.notes || '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+    }
+
+    const response = await fetch(`${API_BASE}/tasks/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(task)
+    });
+    if (!response.ok) throw new Error('Failed to update task');
+    return await response.json();
+  }
+
+  async deleteTask(id: string): Promise<void> {
+    if (isElectronApp()) {
+      await (window as any).electronAPI.deleteTask(parseInt(id));
+      return;
+    }
+
+    const response = await fetch(`${API_BASE}/tasks/${id}`, {
+      method: 'DELETE'
+    });
+    if (!response.ok) throw new Error('Failed to delete task');
   }
 
   async createShift(shift: Omit<Shift, 'id' | 'createdAt' | 'updatedAt'>): Promise<Shift> {

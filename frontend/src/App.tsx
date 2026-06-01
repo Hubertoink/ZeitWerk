@@ -13,6 +13,7 @@ import { useAppDispatch } from './store/hooks';
 const DashboardComponent = React.lazy(() => import('./components/Dashboard/DashboardComponent'));
 const WeekView = React.lazy(() => import('./components/Calendar/WeekView'));
 const MonthView = React.lazy(() => import('./components/Calendar/MonthView'));
+const TaskWeekView = React.lazy(() => import('./components/Tasks/TaskWeekView'));
 const EmployeeList = React.lazy(() => import('./components/Employees/EmployeeList'));
 const OrganizationList = React.lazy(() => import('./components/Organizations/OrganizationList'));
 const ShiftTypeList = React.lazy(() => import('./components/ShiftTypes/ShiftTypeList'));
@@ -172,6 +173,7 @@ const AppContent: React.FC = () => {
               <Route path="/dashboard" element={<DashboardComponent />} />
               <Route path="/week" element={<WeekView />} />
               <Route path="/month" element={<MonthView />} />
+              <Route path="/tasks" element={<TaskWeekView />} />
               <Route path="/employees" element={<EmployeeList />} />
               <Route path="/organizations" element={<OrganizationList />} />
               <Route path="/shift-types" element={<ShiftTypeList />} />

@@ -6,6 +6,11 @@ type WeekExportCell = {
   bg?: string; // hex color like #FF8800
   color?: string;
   bold?: boolean;
+  richText?: Array<{
+    text: string;
+    color?: string;
+    bold?: boolean;
+  }>;
 };
 
 type WeekExportRow = WeekExportCell[];
@@ -87,6 +92,15 @@ function applyBreaks(mins: number): number {
 // Build a minimal Excel-compatible HTML workbook (works in .xls) with inline styles
 function buildExcelHtml(data: SimpleWeekExportData): string {
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const richTextToHtml = (parts: Array<{ text: string; color?: string; bold?: boolean }>) => {
+    return parts.map((part) => {
+      const styles = [
+        part.color ? `color:${part.color}` : '',
+        part.bold ? 'font-weight:bold' : ''
+      ].filter(Boolean).join(';');
+      return `<span style="${styles}">${esc(part.text).replace(/\n/g, '<br/>')}</span>`;
+    }).join('');
+  };
 
   const head = `<!DOCTYPE html><html><head><meta charset="utf-8" />
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
@@ -109,7 +123,10 @@ function buildExcelHtml(data: SimpleWeekExportData): string {
       c.color ? `color:${c.color}` : '',
       c.bold ? 'font-weight:bold' : ''
     ].filter(Boolean).join(';');
-    return `<td style="${styles}">${esc(c.text)}</td>`;
+    const content = c.richText && c.richText.length
+      ? richTextToHtml(c.richText)
+      : esc(c.text).replace(/\n/g, '<br/>');
+    return `<td style="${styles}">${content}</td>`;
   }).join('')}</tr>`).join('')}</tbody>`;
 
   const table = `<table>${thead}${tbody}</table>`;
@@ -212,17 +229,38 @@ export async function saveWeekExcel(data: SimpleWeekExportData, defaultFilename:
 
       // Data rows
       for (const row of data.rows) {
-        const values = row.map(c => c.text);
+        const values = row.map((cell) => {
+          if (cell.richText && cell.richText.length) {
+            return {
+              richText: cell.richText.map((part) => ({
+                text: part.text,
+                font: {
+                  size: 10,
+                  bold: part.bold || false,
+                  color: part.color ? { argb: toARGB(part.color) } : undefined
+                }
+              }))
+            };
+          }
+          return cell.text;
+        });
         const r = ws.addRow(values);
         r.height = 20; // solide Höhe für 10pt Fonts
         r.eachCell((cell: any, colNumber: number) => {
+          const sourceCell = row[colNumber - 1];
           // Wunsch: Datenzellen in Größe 10
-          cell.font = { size: 10, bold: row[colNumber - 1]?.bold || false, color: row[colNumber - 1]?.color ? { argb: toARGB(row[colNumber - 1].color!) } : undefined };
+          if (!sourceCell?.richText?.length) {
+            cell.font = {
+              size: 10,
+              bold: sourceCell?.bold || false,
+              color: sourceCell?.color ? { argb: toARGB(sourceCell.color) } : undefined
+            };
+          }
           cell.alignment = { vertical: 'middle', horizontal: colNumber === 1 ? 'left' : 'center', wrapText: true } as any;
-          const bg = row[colNumber - 1]?.bg;
+          const bg = sourceCell?.bg;
           if (bg) {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: toARGB(bg) } };
-            if (!row[colNumber - 1]?.color) {
+            if (!sourceCell?.color && !sourceCell?.richText?.length) {
               cell.font = { ...(cell.font || {}), color: { argb: 'FFFFFFFF' } };
             }
           }
@@ -905,6 +943,75 @@ export function buildWeekExcelFromShifts(params: {
 
   return {
     title: 'Dienstplan Wochenexport',
+    organization: organizationName,
+    weekRange: { start: days[0], end: days[days.length - 1] },
+    headers,
+    rows
+  };
+}
+
+export function buildWeekExcelFromTasks(params: {
+  employees: any[];
+  days: Date[];
+  getTasks: (employeeId: number, day: Date) => any[];
+  organizationName?: string;
+}): SimpleWeekExportData {
+  const { employees, days, getTasks, organizationName } = params;
+  const headers = ['Mitarbeiter', ...days.map((day) => format(day, 'EEE dd.MM', { locale: deLocale }))];
+
+  const rows: WeekExportRow[] = employees.map((employee) => {
+    const employeeName = `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || 'Mitarbeiter';
+    const row: WeekExportRow = [{ text: employeeName, bold: true }];
+
+    days.forEach((day) => {
+      const tasks = [...(getTasks(employee.id, day) || [])].sort((left: any, right: any) => {
+        const leftTime = left.time || '99:99';
+        const rightTime = right.time || '99:99';
+        return leftTime.localeCompare(rightTime, 'de');
+      });
+
+      if (!tasks.length) {
+        row.push({ text: '' });
+        return;
+      }
+
+      const label = tasks.map((task: any) => {
+        const timeLabel = task.time ? `${task.time} Uhr · ` : '';
+        const noteLabel = task.notes ? `\n${task.notes}` : '';
+        return `${timeLabel}${task.taskTypeName || 'Aufgabe'}${noteLabel}`;
+      }).join(' \n ');
+
+      const richText = tasks.length > 1
+        ? tasks.flatMap((task: any, index: number) => {
+            const lines = [
+              `${task.time ? `${task.time} Uhr · ` : ''}${task.taskTypeName || 'Aufgabe'}`,
+              ...(task.notes ? [task.notes] : [])
+            ];
+            const parts = lines.map((line, lineIndex) => ({
+              text: `${line}${lineIndex < lines.length - 1 ? '\n' : ''}`,
+              color: task.taskTypeColor || '#90A4AE',
+              bold: lineIndex === 0
+            }));
+            if (index < tasks.length - 1) {
+              parts.push({ text: '\n', color: undefined, bold: false });
+            }
+            return parts;
+          })
+        : undefined;
+
+      row.push({
+        text: label,
+        richText,
+        bg: tasks.length === 1 ? (tasks[0].taskTypeColor || '#90A4AE') : undefined,
+        color: tasks.length === 1 ? '#ffffff' : undefined
+      });
+    });
+
+    return row;
+  });
+
+  return {
+    title: 'Aufgaben Wochenexport',
     organization: organizationName,
     weekRange: { start: days[0], end: days[days.length - 1] },
     headers,

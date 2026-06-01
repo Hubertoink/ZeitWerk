@@ -45,6 +45,29 @@ import { saveDashboardExcel } from '../../utils/excelExport';
 import { VacationPeriod } from '../../types/settings';
 import { useSettings } from '../../contexts/SettingsContext';
 
+const parseEmploymentDate = (value?: string) => {
+  if (!value) return null;
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+};
+
+const isEmployeeActiveInRange = (employee: any, startDate: Date, endDate: Date) => {
+  const hireDate = parseEmploymentDate(employee?.hireDate);
+  const exitDate = parseEmploymentDate(employee?.exitDate);
+  const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+
+  if (hireDate && hireDate > end) return false;
+  if (exitDate && exitDate < start) return false;
+
+  return true;
+};
+
 const MonthView: React.FC = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
@@ -198,6 +221,13 @@ const MonthView: React.FC = () => {
       const latestShiftTypes = state?.shiftTypes?.shiftTypes || (shiftTypes || []);
       const latestOrganizations = state?.organizations?.organizations || (organizations || []);
 
+      const exportEmployees = latestEmployees.filter((emp: any) => {
+        const employeeOrgId = (emp.organizationId || emp.organization_id)?.toString?.();
+        const selectedOrgId = selectedOrganization?.id?.toString?.();
+        const inOrg = !selectedOrgId || employeeOrgId === selectedOrgId;
+        return inOrg && isEmployeeActiveInRange(emp, startDate, endDate);
+      });
+
       // Filter by time range and selected org
       const timeRangeShifts = (latestShifts || []).filter((shift: any) => {
         const d = new Date(shift.date);
@@ -220,7 +250,7 @@ const MonthView: React.FC = () => {
           timeRange: `${format(startDate, 'dd.MM.yyyy')} - ${format(endDate, 'dd.MM.yyyy')}`,
           totalRecords: {
             shifts: timeRangeShifts.length,
-            employees: latestEmployees.length,
+            employees: exportEmployees.length,
             shiftTypes: latestShiftTypes.length,
             organizations: latestOrganizations.length
           }
@@ -236,7 +266,7 @@ const MonthView: React.FC = () => {
           totalShifts: timeRangeShifts.length,
           // Removed assignedRate; include minimal set like Dashboard
           unassignedShifts: timeRangeShifts.filter((s: any) => !s.employee_id && !s.employeeId).length,
-          employees: filteredEmployees.length,
+          employees: exportEmployees.length,
           organizations: latestOrganizations.length,
           shiftTypes: latestShiftTypes.length
         },
@@ -249,7 +279,7 @@ const MonthView: React.FC = () => {
           phone: org.phone || '',
           email: org.email || ''
         })),
-        employees: latestEmployees.map((emp: any) => ({
+        employees: exportEmployees.map((emp: any) => ({
           id: emp.id,
           firstName: emp.firstName || emp.first_name,
           lastName: emp.lastName || emp.last_name,

@@ -24,9 +24,13 @@ import {
   Snackbar,
   Alert,
   TextField,
-  LinearProgress
+  LinearProgress,
+  Checkbox,
+  FormControlLabel,
+  FormGroup,
+  Divider
 } from '@mui/material';
-import { ChevronLeft, ChevronRight, Person as PersonIcon, Close as CloseIcon, ContentCopy as CopyIcon, InfoOutlined, DragIndicator, Reorder as ReorderIcon, DeleteSweep as DeleteSweepIcon } from '@mui/icons-material';
+import { ChevronLeft, ChevronRight, Person as PersonIcon, Close as CloseIcon, ContentCopy as CopyIcon, InfoOutlined, DragIndicator, Reorder as ReorderIcon, DeleteSweep as DeleteSweepIcon, Group as GroupIcon } from '@mui/icons-material';
 import type { Theme } from '@mui/material/styles';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { setWeekDate, navigateWeek } from '../../store/slices/calendarSlice';
@@ -89,9 +93,55 @@ function endDisplayWithMidnight(startStr?: string, endStr?: string): string {
   return endStr || '';
 }
 
+function parseLocalEmployeeDate(value?: string): Date | null {
+  if (!value) return null;
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+}
+
+function isEmployeeActiveOnDate(employee: any, date: Date): boolean {
+  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const hireDate = parseLocalEmployeeDate(employee?.hireDate);
+  const exitDate = parseLocalEmployeeDate(employee?.exitDate);
+
+  if (hireDate && day < hireDate) return false;
+  if (exitDate && day > exitDate) return false;
+
+  return true;
+}
+
+function getEmployeeInactiveReason(employee: any, date: Date): string | null {
+  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const hireDate = parseLocalEmployeeDate(employee?.hireDate);
+  const exitDate = parseLocalEmployeeDate(employee?.exitDate);
+
+  if (hireDate && day < hireDate) return 'Noch nicht eingetreten';
+  if (exitDate && day > exitDate) return 'Bereits ausgetreten';
+
+  return null;
+}
+
+function getDailyPlanKeyForDate(date: Date): 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' {
+  return (['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const)[date.getDay()];
+}
+
+function getEmployeePlannedMinutes(employee: any, date: Date): number | null {
+  const key = getDailyPlanKeyForDate(date);
+  const hours = employee?.dailyHoursPlan?.[key];
+  if (typeof hours === 'number' && isFinite(hours) && hours >= 0) {
+    return Math.round(hours * 60);
+  }
+  return null;
+}
+
 const WeekView: React.FC = () => {
   const dispatch = useAppDispatch();
-  const { settings } = useSettings();
+  const { settings, updateSettings } = useSettings();
   const calendar = useAppSelector((state: any) => state.calendar);
   const { employees } = useAppSelector((state: any) => state.employees);
   const { shiftTypes } = useAppSelector((state: any) => state.shiftTypes);
@@ -104,7 +154,7 @@ const WeekView: React.FC = () => {
   const [weekDays, setWeekDays] = useState<Date[]>([]);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [vacationPeriods, setVacationPeriods] = useState<VacationPeriod[]>([]);
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' });
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' | 'info' });
   const [editShiftDialog, setEditShiftDialog] = useState({ open: false, shift: null as any });
   const [conflictDialog, setConflictDialog] = useState<{
     open: boolean;
@@ -119,6 +169,12 @@ const WeekView: React.FC = () => {
   });
   const [weekCopyDialog, setWeekCopyDialog] = useState({ open: false });
   const [isCopyingWeek, setIsCopyingWeek] = useState(false);
+  const [isWeekRangeHighlighted, setIsWeekRangeHighlighted] = useState(false);
+  const weekRangeHighlightTimeoutRef = useRef<number | null>(null);
+  // Slide animation for week transitions
+  const slideAnimationEnabled = settings?.ui?.weekSlideAnimation !== false;
+  const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null);
+  const [slideKey, setSlideKey] = useState(0);
   const [deletingEmployeeWeekId, setDeletingEmployeeWeekId] = useState<string | null>(null);
   const [deleteEmployeeWeekDialog, setDeleteEmployeeWeekDialog] = useState<{
     open: boolean;
@@ -128,6 +184,8 @@ const WeekView: React.FC = () => {
   // Reorder mode for employees
   const [isReorderMode, setIsReorderMode] = useState(false);
   const [draftEmployeeOrder, setDraftEmployeeOrder] = useState<string[]>([]);
+  const [employeeSelectionDialogOpen, setEmployeeSelectionDialogOpen] = useState(false);
+  const [draftVisibleEmployeeIds, setDraftVisibleEmployeeIds] = useState<string[]>([]);
   // Dynamic height calc for inner table to avoid outer page scroll
   const tableRef = useRef<HTMLDivElement | null>(null);
   const [tableHeight, setTableHeight] = useState<number | null>(null);
@@ -171,6 +229,25 @@ const WeekView: React.FC = () => {
 
   // Serialize vacation periods from settings to create a stable dependency key
   const vacationPeriodsKey = useMemo(() => JSON.stringify(settings?.calendar?.vacationPeriods || []), [settings?.calendar?.vacationPeriods]);
+
+  const triggerWeekRangeHighlight = useCallback(() => {
+    setIsWeekRangeHighlighted(true);
+    if (weekRangeHighlightTimeoutRef.current) {
+      window.clearTimeout(weekRangeHighlightTimeoutRef.current);
+    }
+    weekRangeHighlightTimeoutRef.current = window.setTimeout(() => {
+      setIsWeekRangeHighlighted(false);
+      weekRangeHighlightTimeoutRef.current = null;
+    }, 1600);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (weekRangeHighlightTimeoutRef.current) {
+        window.clearTimeout(weekRangeHighlightTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const startDate = startOfWeek(currentDate, { weekStartsOn: 1 }); // Start am Montag
@@ -249,15 +326,21 @@ const WeekView: React.FC = () => {
   }, []);
 
   const handlePrevWeek = () => {
+    setSlideDirection('right');
+    setSlideKey(k => k + 1);
     dispatch(navigateWeek('prev'));
   };
 
   const handleNextWeek = () => {
+    setSlideDirection('left');
+    setSlideKey(k => k + 1);
     dispatch(navigateWeek('next'));
   };
 
   const handleToday = () => {
-  dispatch(setWeekDate(new Date().toISOString()));
+    setSlideDirection(null);
+    setSlideKey(k => k + 1);
+    dispatch(setWeekDate(new Date().toISOString()));
   };
 
   const handleExcelWeekExport = async () => {
@@ -815,6 +898,144 @@ const WeekView: React.FC = () => {
     });
   };
 
+  const getShiftEmployeeId = useCallback((shift: any) => (shift.employeeId || shift.employee_id)?.toString?.() || '', []);
+  const getShiftTypeId = useCallback((shift: any) => (shift.shiftTypeId || shift.shift_type_id)?.toString?.() || '', []);
+  const getShiftOrgId = useCallback((shift: any) => {
+    const raw = shift.organizationUnitId ?? shift.organizationId ?? shift.organization_id ?? shift.orgId ?? shift.unitId;
+    return raw?.toString?.() || '';
+  }, []);
+  const getShiftStartTime = useCallback((shift: any) => (shift.startTime || shift.start_time || '09:00').toString(), []);
+  const getShiftEndTime = useCallback((shift: any) => (shift.endTime || shift.end_time || '17:00').toString(), []);
+  const getShiftDateKey = useCallback((shift: any) => format(new Date(shift.date), 'yyyy-MM-dd'), []);
+  const buildDuplicateKey = useCallback((params: {
+    employeeId: string;
+    date: string;
+    shiftTypeId: string;
+    startTime: string;
+    endTime: string;
+    organizationId: string;
+  }) => {
+    return [params.employeeId, params.date, params.shiftTypeId, params.startTime, params.endTime, params.organizationId].join('|');
+  }, []);
+
+  const weekCopyPreview = useMemo(() => {
+    if (!weekDays || weekDays.length === 0) {
+      return {
+        currentWeekShifts: [] as any[],
+        targetWeekExistingShifts: [] as any[],
+        shiftsToCreate: [] as any[],
+        duplicatesFound: 0,
+        targetDailyCounts: [] as { date: Date; count: number }[],
+        targetStart: null as Date | null,
+        targetEnd: null as Date | null
+      };
+    }
+
+    const startDay = weekDays[0];
+    const endDay = weekDays[weekDays.length - 1];
+    const targetStart = addDays(startDay, 7);
+    const targetEnd = addDays(endDay, 7);
+    const selectedOrgId = selectedOrganization?.id?.toString?.() || '';
+
+    const isInRange = (value: Date, start: Date, end: Date) => value >= start && value <= end;
+    const isShiftInSelectedOrg = (shift: any) => {
+      if (!selectedOrgId) return true;
+      return getShiftOrgId(shift) === selectedOrgId;
+    };
+
+    const currentWeekShifts = shifts.filter((shift: any) => {
+      const shiftDate = new Date(shift.date);
+      return isInRange(shiftDate, startDay, endDay) && isShiftInSelectedOrg(shift);
+    });
+
+    const targetWeekExistingShifts = shifts.filter((shift: any) => {
+      const shiftDate = new Date(shift.date);
+      return isInRange(shiftDate, targetStart, targetEnd) && isShiftInSelectedOrg(shift);
+    });
+
+    const existingKeySet = new Set<string>();
+    targetWeekExistingShifts.forEach((shift: any) => {
+      existingKeySet.add(buildDuplicateKey({
+        employeeId: getShiftEmployeeId(shift),
+        date: getShiftDateKey(shift),
+        shiftTypeId: getShiftTypeId(shift),
+        startTime: getShiftStartTime(shift),
+        endTime: getShiftEndTime(shift),
+        organizationId: getShiftOrgId(shift)
+      }));
+    });
+
+    let duplicatesFound = 0;
+    const shiftsToCreate: any[] = [];
+    currentWeekShifts.forEach((shift: any) => {
+      const sourceDate = new Date(shift.date);
+      const targetDate = addDays(sourceDate, 7);
+      const employeeId = getShiftEmployeeId(shift);
+      const shiftTypeId = getShiftTypeId(shift);
+      const startTime = getShiftStartTime(shift);
+      const endTime = getShiftEndTime(shift);
+      const targetEmployee = employees.find((employee: any) => employee.id?.toString?.() === employeeId);
+      const fallbackOrgId = targetEmployee?.organizationId?.toString?.() || getShiftOrgId(shift);
+      const organizationId = selectedOrgId || fallbackOrgId;
+      const targetDateKey = format(targetDate, 'yyyy-MM-dd');
+
+      if (!organizationId) return;
+
+      const duplicateKey = buildDuplicateKey({
+        employeeId,
+        date: targetDateKey,
+        shiftTypeId,
+        startTime,
+        endTime,
+        organizationId
+      });
+
+      if (existingKeySet.has(duplicateKey)) {
+        duplicatesFound += 1;
+        return;
+      }
+
+      shiftsToCreate.push({
+        shiftTypeId,
+        employeeId,
+        date: targetDateKey,
+        startTime,
+        endTime,
+        notes: shift.notes,
+        organizationUnitId: organizationId
+      });
+      existingKeySet.add(duplicateKey);
+    });
+
+    const targetDailyCounts = weekDays.map((day) => {
+      const targetDay = addDays(day, 7);
+      const count = targetWeekExistingShifts.filter((shift: any) => isSameDay(new Date(shift.date), targetDay)).length;
+      return { date: targetDay, count };
+    });
+
+    return {
+      currentWeekShifts,
+      targetWeekExistingShifts,
+      shiftsToCreate,
+      duplicatesFound,
+      targetDailyCounts,
+      targetStart,
+      targetEnd
+    };
+  }, [
+    weekDays,
+    shifts,
+    selectedOrganization?.id,
+    employees,
+    buildDuplicateKey,
+    getShiftDateKey,
+    getShiftEmployeeId,
+    getShiftEndTime,
+    getShiftOrgId,
+    getShiftStartTime,
+    getShiftTypeId
+  ]);
+
   const handleCopyWeek = async () => {
     if (isCopyingWeek) return;
     setIsCopyingWeek(true);
@@ -826,43 +1047,42 @@ const WeekView: React.FC = () => {
         return;
       }
 
-      // Ermittele Start- und Endtag der aktuell angezeigten Woche (respektiert 5/7 Tage)
-      const startDay = weekDays[0];
-      const endDay = weekDays[weekDays.length - 1];
-
-      // Hole alle Schichten der aktuellen Woche (inkl. variablem Wochenumfang)
-      const currentWeekShifts = shifts.filter((shift: any) => {
-        const shiftDate = new Date(shift.date);
-        return shiftDate >= startDay && shiftDate <= endDay;
-      });
-
-      // Erstelle neue Schichten für die nächste Woche
-      for (const shift of currentWeekShifts) {
-        const newDate = addDays(new Date(shift.date), 7);
-        // Ermittele Ziel-Organisation: bevorzugt ausgewählte Organisation, sonst Organisation des Mitarbeiters der Schicht
-        const targetEmployeeId = (shift.employeeId || shift.employee_id)?.toString?.();
-        const targetEmpOrgId = (employees.find((e: any) => e.id?.toString?.() === targetEmployeeId) as any)?.organizationId;
-        const orgIdForCopy = (selectedOrganization?.id ?? targetEmpOrgId) as string | number | undefined;
-        const newShiftData = {
-          // Normalisiere Feldnamen (unterstütze snake_case und camelCase)
-          shiftTypeId: (shift.shiftTypeId || shift.shift_type_id)?.toString(),
-          employeeId: (shift.employeeId || shift.employee_id)?.toString(),
-          date: format(newDate, 'yyyy-MM-dd'),
-          startTime: shift.startTime || shift.start_time || '09:00',
-          endTime: shift.endTime || shift.end_time || '17:00',
-          notes: shift.notes,
-          organizationUnitId: String(orgIdForCopy || '')
-        };
-        if (!newShiftData.organizationUnitId) {
-          setSnackbar({ open: true, message: 'Keine Organisation ausgewählt – Woche konnte nicht kopiert werden.', severity: 'error' });
-          return;
-        }
-        await dispatch(createShift(newShiftData)).unwrap();
+      if (weekCopyPreview.currentWeekShifts.length === 0) {
+        setSnackbar({ open: true, message: 'Keine Schichten in der aktuellen Woche gefunden.', severity: 'error' });
+        setWeekCopyDialog({ open: false });
+        return;
       }
+
+      const invalidEntries = weekCopyPreview.currentWeekShifts.length - weekCopyPreview.shiftsToCreate.length - weekCopyPreview.duplicatesFound;
+      if (invalidEntries > 0) {
+        setSnackbar({ open: true, message: `${invalidEntries} Schicht(en) ohne Organisation konnten nicht kopiert werden.`, severity: 'error' });
+        return;
+      }
+
+      if (weekCopyPreview.shiftsToCreate.length === 0) {
+        setWeekCopyDialog({ open: false });
+        setSnackbar({ open: true, message: 'Alle Schichten existieren bereits in der Zielwoche. Keine neuen Schichten erstellt.', severity: 'error' });
+        return;
+      }
+
+      await Promise.all(
+        weekCopyPreview.shiftsToCreate.map((newShiftData) => dispatch(createShift(newShiftData)).unwrap())
+      );
       
       dispatch(fetchShifts({}));
+      if (weekCopyPreview.targetStart) {
+        setSlideDirection('left');
+        setSlideKey(k => k + 1);
+        dispatch(setWeekDate(weekCopyPreview.targetStart.toISOString()));
+        triggerWeekRangeHighlight();
+      }
       setWeekCopyDialog({ open: false });
-      setSnackbar({ open: true, message: 'Woche erfolgreich kopiert', severity: 'success' });
+
+      let message = `${weekCopyPreview.shiftsToCreate.length} Schicht(en) in die Zielwoche kopiert.`;
+      if (weekCopyPreview.duplicatesFound > 0) {
+        message += ` ${weekCopyPreview.duplicatesFound} Duplikat(e) wurden übersprungen.`;
+      }
+      setSnackbar({ open: true, message, severity: 'success' });
     } catch (error) {
       console.error('Fehler beim Kopieren der Woche:', error);
       setSnackbar({ open: true, message: 'Fehler beim Kopieren der Woche', severity: 'error' });
@@ -871,10 +1091,25 @@ const WeekView: React.FC = () => {
     }
   };
 
-  // Filter employees by selected organization
-  const filteredEmployees = selectedOrganization 
-    ? employees.filter((emp: any) => emp.organizationId === selectedOrganization.id)
-    : employees;
+  const selectedOrgId = selectedOrganization?.id?.toString?.() || '';
+
+  const baseEmployees = useMemo(() => {
+    return (selectedOrganization
+      ? employees.filter((emp: any) => emp.organizationId === selectedOrganization.id)
+      : employees).filter((emp: any) => weekDays.some(day => isEmployeeActiveOnDate(emp, day)));
+  }, [employees, selectedOrganization, weekDays]);
+
+  const visibleEmployeeIdsForOrg = useMemo(() => {
+    const map = settings?.ui?.employeeVisibilityByOrg || {};
+    return selectedOrgId && Array.isArray(map[selectedOrgId]) ? map[selectedOrgId] : null;
+  }, [selectedOrgId, settings?.ui?.employeeVisibilityByOrg]);
+
+  // Filter employees by selected organization and explicit visibility selection
+  const filteredEmployees = useMemo(() => {
+    if (!visibleEmployeeIdsForOrg) return baseEmployees;
+    const visibleSet = new Set(visibleEmployeeIdsForOrg);
+    return baseEmployees.filter((emp: any) => visibleSet.has(emp.id?.toString?.() || ''));
+  }, [baseEmployees, visibleEmployeeIdsForOrg]);
 
   // Stable key for current employees list (ids), avoids re-init on referential changes
   const employeesIdsKey = useMemo(() => {
@@ -971,7 +1206,6 @@ const WeekView: React.FC = () => {
     });
   };
 
-  const { updateSettings } = useSettings();
   const persistCustomOrder = () => {
     try {
       const orgId = selectedOrganization?.id?.toString?.();
@@ -997,6 +1231,50 @@ const WeekView: React.FC = () => {
   const cancelReorder = () => {
     setIsReorderMode(false);
   };
+
+  const openEmployeeSelectionDialog = useCallback(() => {
+    const initialIds = visibleEmployeeIdsForOrg || baseEmployees.map((employee: any) => employee.id?.toString?.() || '');
+    setDraftVisibleEmployeeIds(initialIds);
+    setEmployeeSelectionDialogOpen(true);
+  }, [baseEmployees, visibleEmployeeIdsForOrg]);
+
+  const toggleDraftEmployeeVisibility = useCallback((employeeId: string) => {
+    setDraftVisibleEmployeeIds((prev) => prev.includes(employeeId)
+      ? prev.filter((id) => id !== employeeId)
+      : [...prev, employeeId]);
+  }, []);
+
+  const persistEmployeeVisibility = useCallback(() => {
+    try {
+      if (!selectedOrgId) {
+        setEmployeeSelectionDialogOpen(false);
+        return;
+      }
+
+      const allEmployeeIds = baseEmployees.map((employee: any) => employee.id?.toString?.() || '');
+      const nextMap = { ...(settings?.ui?.employeeVisibilityByOrg || {}) } as Record<string, string[]>;
+      const normalizedDraft = allEmployeeIds.filter((id: string) => draftVisibleEmployeeIds.includes(id));
+
+      if (normalizedDraft.length === allEmployeeIds.length) {
+        delete nextMap[selectedOrgId];
+      } else {
+        nextMap[selectedOrgId] = normalizedDraft;
+      }
+
+      updateSettings({
+        ...settings,
+        ui: {
+          ...settings.ui,
+          employeeVisibilityByOrg: nextMap
+        }
+      });
+      setEmployeeSelectionDialogOpen(false);
+      setSnackbar({ open: true, message: 'Mitarbeiterauswahl gespeichert', severity: 'success' });
+    } catch (error) {
+      console.error('Persist employee visibility failed', error);
+      setSnackbar({ open: true, message: 'Fehler beim Speichern der Mitarbeiterauswahl', severity: 'error' });
+    }
+  }, [baseEmployees, draftVisibleEmployeeIds, selectedOrgId, settings, updateSettings]);
 
   return (
     <Box sx={{ px: 3, pt: 3, pb: 0, overflow: 'hidden' }}>
@@ -1050,6 +1328,23 @@ const WeekView: React.FC = () => {
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           {/* Sorting controls */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Tooltip title="Sichtbare Mitarbeiter auswählen">
+              <IconButton
+                onClick={openEmployeeSelectionDialog}
+                color={visibleEmployeeIdsForOrg ? 'primary' : 'default'}
+                size="small"
+              >
+                <GroupIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            {baseEmployees.length > 0 && (
+              <Chip
+                size="small"
+                label={`${filteredEmployees.length}/${baseEmployees.length} Mitarbeiter`}
+                color={visibleEmployeeIdsForOrg ? 'primary' : 'default'}
+                variant={visibleEmployeeIdsForOrg ? 'filled' : 'outlined'}
+              />
+            )}
             <Tooltip title={isReorderMode ? 'Reihenfolge beenden' : 'Reihenfolge bearbeiten'}>
               <IconButton
                 onClick={() => setIsReorderMode(v => !v)}
@@ -1155,7 +1450,21 @@ const WeekView: React.FC = () => {
               boxShadow: (theme) => theme.palette.mode === 'dark' ? '0 0 0 2px rgba(255,255,255,0.08) inset' : '0 0 0 2px rgba(0,0,0,0.06) inset'
             }}
           />
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              px: 0.75,
+              py: 0.25,
+              borderRadius: 1,
+              border: '2px solid',
+              borderColor: isWeekRangeHighlighted ? 'primary.main' : 'transparent',
+              transition: 'background-color 220ms ease, box-shadow 220ms ease',
+              backgroundColor: isWeekRangeHighlighted ? 'primary.50' : 'transparent',
+              boxShadow: isWeekRangeHighlighted ? 2 : 'none'
+            }}
+          >
             <IconButton onClick={handlePrevWeek} size="small"><ChevronLeft /></IconButton>
             <Typography variant="subtitle1" sx={{ minWidth: 200, textAlign: 'center' }}>
               {weekDays.length > 0 ? (
@@ -1178,10 +1487,31 @@ const WeekView: React.FC = () => {
           height: tableHeight || undefined,
           maxHeight: tableHeight ? undefined : 'calc(100dvh - 300px)',
           overflowY: 'auto',
+          overflowX: 'hidden',
           // avoid causing an extra outer scrollbar by ensuring inner scroll only when needed
-          scrollbarGutter: 'stable'
+          scrollbarGutter: 'stable',
+          '@keyframes slideInFromRight': {
+            '0%': { opacity: 0.3, transform: 'translateX(60px)' },
+            '100%': { opacity: 1, transform: 'translateX(0)' }
+          },
+          '@keyframes slideInFromLeft': {
+            '0%': { opacity: 0.3, transform: 'translateX(-60px)' },
+            '100%': { opacity: 1, transform: 'translateX(0)' }
+          }
         }}
       >
+        <Box
+          key={slideKey}
+          sx={{
+            animation: slideAnimationEnabled
+              ? slideDirection === 'left'
+                ? 'slideInFromRight 280ms ease-out'
+                : slideDirection === 'right'
+                  ? 'slideInFromLeft 280ms ease-out'
+                  : 'none'
+              : 'none'
+          }}
+        >
         <Table stickyHeader>
           <TableHead>
             <TableRow>
@@ -1202,18 +1532,18 @@ const WeekView: React.FC = () => {
                     sx={{ 
                       minWidth: 120,
                       fontWeight: 'bold',
-                      backgroundColor: isToday ? 'primary.50' 
+                      backgroundColor: isToday ? 'primary.main' 
                         : vacation ? 'warning.50' 
                         : holiday ? 'error.50' 
                         : 'background.paper',
-                      color: isToday ? 'primary.main' 
+                      color: isToday ? 'primary.contrastText' 
                         : vacation ? 'warning.main' 
                         : holiday ? 'error.main' 
                         : 'text.primary',
-                      borderLeft: vacation ? '4px solid' : 'none',
-                      borderLeftColor: vacation ? 'warning.main' : 'inherit',
-                      borderRight: isLast ? 'none' : '1px solid',
-                      borderRightColor: 'divider',
+                      borderLeft: isToday ? '2px solid' : vacation ? '4px solid' : 'none',
+                      borderLeftColor: isToday ? 'primary.main' : vacation ? 'warning.main' : 'inherit',
+                      borderRight: isToday ? '2px solid' : isLast ? 'none' : '1px solid',
+                      borderRightColor: isToday ? 'primary.main' : 'divider',
                       zIndex: 3
                     }}
                   >
@@ -1301,6 +1631,12 @@ const WeekView: React.FC = () => {
                 </TableCell>
                 {weekDays.map((day, dayIndex) => {
                   const employeeShifts = getShiftsForEmployeeAndDay(employee.id, day);
+                  const isEmployeeActiveForDay = isEmployeeActiveOnDate(employee, day);
+                  const employeeInactiveReason = isEmployeeActiveForDay ? null : getEmployeeInactiveReason(employee, day);
+                  const visibleEmployeeShifts = isEmployeeActiveForDay ? employeeShifts : [];
+                  const plannedMinutes = getEmployeePlannedMinutes(employee, day);
+                  const isPlannedFreeDay = isEmployeeActiveForDay && plannedMinutes === 0;
+                  const isToday = isSameDay(day, new Date());
                   const vacation = isVacationDay(day);
                   const vacationBlocksScheduling = !!vacation?.affectsScheduling;
                   const isLast = dayIndex === weekDays.length - 1;
@@ -1313,15 +1649,34 @@ const WeekView: React.FC = () => {
                         verticalAlign: 'top',
                         height: 80,
                         position: 'relative',
-                        backgroundColor: vacation ? 'warning.50' : 'inherit',
-                        borderLeft: vacation ? '4px solid' : 'none',
-                        borderLeftColor: vacation ? 'warning.main' : 'inherit',
-                        borderRight: isLast ? 'none' : '1px solid',
-                        borderRightColor: 'divider',
-                        '&:hover': { backgroundColor: vacation ? 'warning.100' : 'action.hover' },
-                        opacity: vacation ? 0.8 : 1
+                        backgroundColor: !isEmployeeActiveForDay
+                          ? 'action.disabledBackground'
+                          : vacation
+                            ? 'warning.50'
+                            : isPlannedFreeDay
+                              ? 'grey.100'
+                              : isToday
+                                ? 'action.selected'
+                                : 'inherit',
+                        borderLeft: isToday ? '2px solid' : vacation ? '4px solid' : isPlannedFreeDay ? '4px solid' : 'none',
+                        borderLeftColor: isToday ? 'primary.main' : vacation ? 'warning.main' : isPlannedFreeDay ? 'grey.400' : 'inherit',
+                        borderRight: isToday ? '2px solid' : isLast ? 'none' : '1px solid',
+                        borderRightColor: isToday ? 'primary.main' : 'divider',
+                        '&:hover': {
+                          backgroundColor: !isEmployeeActiveForDay
+                            ? 'action.disabledBackground'
+                            : vacation
+                              ? 'warning.100'
+                              : isPlannedFreeDay
+                                ? 'grey.200'
+                                : isToday
+                                  ? 'action.focus'
+                                  : 'action.hover'
+                        },
+                        opacity: !isEmployeeActiveForDay ? 0.7 : vacation ? 0.8 : isPlannedFreeDay ? 0.92 : 1,
+                        cursor: isEmployeeActiveForDay ? 'pointer' : 'not-allowed'
                       }}
-                      onDrop={isReorderMode ? undefined : (e) => {
+                      onDrop={isReorderMode || !isEmployeeActiveForDay ? undefined : (e) => {
                         e.preventDefault();
                         // During Schließzeit: only block if it affects scheduling, but allow all-day absences and all-day shift types
                         if (vacationBlocksScheduling) {
@@ -1373,12 +1728,13 @@ const WeekView: React.FC = () => {
                           handleShiftDrop(shiftType, employee.id, day);
                         }
                       }}
-                      onDragOver={isReorderMode ? undefined : (e) => {
+                      onDragOver={isReorderMode || !isEmployeeActiveForDay ? undefined : (e) => {
                         e.preventDefault();
                       }}
                       onClick={async () => {
                         // Allow clicks during Schließzeit if it does not affect scheduling
                         if (isReorderMode) return;
+                        if (!isEmployeeActiveForDay) return;
                         if (vacation && vacationBlocksScheduling) return;
                         if (copyBuffer) {
                           await handleCopyExistingShift(copyBuffer, employee.id, day);
@@ -1389,6 +1745,22 @@ const WeekView: React.FC = () => {
                       }}
                     >
                       <Box sx={{ minHeight: 60 }}>
+                        {!isEmployeeActiveForDay && employeeInactiveReason && (
+                          <Card
+                            sx={{
+                              mb: 0.5,
+                              backgroundColor: 'action.disabled',
+                              color: 'text.secondary',
+                              textAlign: 'center'
+                            }}
+                          >
+                            <CardContent sx={{ p: 0.25, '&:last-child': { pb: 0.25 } }}>
+                              <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
+                                {employeeInactiveReason}
+                              </Typography>
+                            </CardContent>
+                          </Card>
+                        )}
                         {vacation && (
                           <Card
                             sx={{
@@ -1405,8 +1777,26 @@ const WeekView: React.FC = () => {
                             </CardContent>
                           </Card>
                         )}
+                        {isPlannedFreeDay && (
+                          <Card
+                            sx={{
+                              mb: 0.5,
+                              backgroundColor: 'grey.300',
+                              color: 'text.primary',
+                              textAlign: 'center',
+                              border: '1px dashed',
+                              borderColor: 'grey.500'
+                            }}
+                          >
+                            <CardContent sx={{ p: 0.25, '&:last-child': { pb: 0.25 } }}>
+                              <Typography variant="caption" sx={{ fontWeight: 'bold', letterSpacing: 0.4 }}>
+                                FREI
+                              </Typography>
+                            </CardContent>
+                          </Card>
+                        )}
                         
-                        {employeeShifts.map((shift: any) => (
+                        {visibleEmployeeShifts.map((shift: any) => (
                           // Tooltip with detailed time info
                           <Tooltip
                             key={`tt-${shift.id}`}
@@ -1661,6 +2051,7 @@ const WeekView: React.FC = () => {
             ))}
           </TableBody>
         </Table>
+        </Box>
       </TableContainer>
 
       {/* Info wenn keine Mitarbeiter vorhanden */}
@@ -1798,6 +2189,51 @@ const WeekView: React.FC = () => {
         </DialogActions>
       </Dialog>
 
+      <Dialog open={employeeSelectionDialogOpen} onClose={() => setEmployeeSelectionDialogOpen(false)} fullWidth maxWidth="sm">
+        <DialogTitle>Mitarbeiter im Schichtplan anzeigen</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1, mb: 1.5, flexWrap: 'wrap' }}>
+            <Typography variant="body2" color="text.secondary">
+              Wählen Sie aus, welche Mitarbeiter im Wochenplan angezeigt werden.
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              <Button
+                size="small"
+                onClick={() => setDraftVisibleEmployeeIds(baseEmployees.map((employee: any) => employee.id?.toString?.() || ''))}
+              >
+                Alle
+              </Button>
+              <Button size="small" onClick={() => setDraftVisibleEmployeeIds([])}>
+                Keine
+              </Button>
+            </Box>
+          </Box>
+          <Divider sx={{ mb: 1.5 }} />
+          <FormGroup>
+            {baseEmployees.map((employee: any) => {
+              const employeeId = employee.id?.toString?.() || '';
+              const label = `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || 'Mitarbeiter';
+              return (
+                <FormControlLabel
+                  key={employeeId}
+                  control={
+                    <Checkbox
+                      checked={draftVisibleEmployeeIds.includes(employeeId)}
+                      onChange={() => toggleDraftEmployeeVisibility(employeeId)}
+                    />
+                  }
+                  label={`${label}${employee.position ? ` (${employee.position})` : ''}`}
+                />
+              );
+            })}
+          </FormGroup>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEmployeeSelectionDialogOpen(false)}>Abbrechen</Button>
+          <Button onClick={persistEmployeeVisibility} variant="contained">Speichern</Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Bulk Create Dialog */}
       <Dialog 
         open={bulkCreateDialog.open}
@@ -1872,6 +2308,38 @@ const WeekView: React.FC = () => {
               </>
             )}
           </Typography>
+          <Box sx={{ mt: 1.5 }}>
+            <Typography variant="body2" color="text.secondary">
+              Aktuelle Schichten: {weekCopyPreview.currentWeekShifts.length}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Bereits in Zielwoche: {weekCopyPreview.targetWeekExistingShifts.length}
+            </Typography>
+            <Typography variant="body2" color={weekCopyPreview.duplicatesFound > 0 ? 'warning.main' : 'text.secondary'}>
+              Potenzielle Duplikate (werden übersprungen): {weekCopyPreview.duplicatesFound}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Neue Schichten nach Kopie: {weekCopyPreview.shiftsToCreate.length}
+            </Typography>
+          </Box>
+          {weekCopyPreview.targetDailyCounts.length > 0 && (
+            <Box sx={{ mt: 1.5 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+                Zielwoche im Überblick (vor dem Kopieren):
+              </Typography>
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
+                {weekCopyPreview.targetDailyCounts.map((entry) => (
+                  <Chip
+                    key={entry.date.toISOString()}
+                    label={`${format(entry.date, 'EEE dd.MM', { locale: de })}: ${entry.count}`}
+                    size="small"
+                    color={entry.count > 0 ? 'warning' : 'default'}
+                    variant={entry.count > 0 ? 'filled' : 'outlined'}
+                  />
+                ))}
+              </Box>
+            </Box>
+          )}
           {isCopyingWeek && (
             <Box sx={{ mt: 2 }}>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>Schichten werden kopiert…</Typography>
