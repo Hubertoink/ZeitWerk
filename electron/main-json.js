@@ -708,6 +708,54 @@ class DienstplanApp {
             }
         });
 
+        // Generate PDF from HTML and save to export folder (A4 landscape by default)
+        ipcMain.handle('pdf:generateFromHtml', async (_evt, html, options = {}) => {
+            try {
+                const s = await readAppSettings();
+                const baseDir = s?.exportFolder;
+                if (!baseDir) return { success: false, error: 'Kein Exportordner gesetzt' };
+                await ensureDir(baseDir);
+
+                const fileName = (options && options.fileName) ? options.fileName : `Aufgaben_${Date.now()}.pdf`;
+                const fullPath = path.join(baseDir, fileName);
+
+                // Create an offscreen BrowserWindow to load HTML and print to PDF
+                const pdfWin = new BrowserWindow({
+                    show: false,
+                    webPreferences: {
+                        offscreen: false,
+                        nodeIntegration: false,
+                        contextIsolation: true,
+                    }
+                });
+
+                await pdfWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(String(html))}`);
+
+                // Wait for content to finish loading
+                await new Promise((resolve) => {
+                    pdfWin.webContents.once('did-finish-load', resolve);
+                    // Timeout safety
+                    setTimeout(resolve, 2000);
+                });
+
+                const pdfOptions = {
+                    marginsType: 1,
+                    pageSize: 'A4',
+                    printBackground: true,
+                    landscape: !!(options && options.landscape !== undefined) ? !!options.landscape : true,
+                    scaleFactor: 100
+                };
+
+                const data = await pdfWin.webContents.printToPDF(pdfOptions);
+                await fsp.writeFile(fullPath, data);
+                try { pdfWin.destroy(); } catch (_) { }
+                return { success: true, path: fullPath };
+            } catch (e) {
+                console.error('pdf:generateFromHtml failed', e);
+                return { success: false, error: e.message };
+            }
+        });
+
         ipcMain.handle('app:relaunch', async () => {
             try {
                 // Ensure windows are closed to avoid lingering state

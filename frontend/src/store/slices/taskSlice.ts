@@ -34,6 +34,7 @@ export const createTask = createAsyncThunk(
     employeeId: string;
     date: string;
     time?: string;
+    duration?: number;
     notes?: string;
     organizationId: string;
   }, { rejectWithValue }) => {
@@ -48,7 +49,7 @@ export const createTask = createAsyncThunk(
 export const updateTask = createAsyncThunk(
   'tasks/updateTask',
   async (
-    { id, data }: { id: number; data: { date?: string; employeeId?: string; taskTypeId?: string; organizationId?: string; time?: string; notes?: string } },
+    { id, data }: { id: number; data: { date?: string; employeeId?: string; taskTypeId?: string; organizationId?: string; time?: string; duration?: number; notes?: string } },
     { rejectWithValue }
   ) => {
     try {

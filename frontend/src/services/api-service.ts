@@ -671,6 +671,7 @@ class APIService {
           id: task.id ? task.id.toString() : '',
           date: task.date || '',
           time: task.time || '',
+          duration: task.duration ?? task.durationMinutes ?? task.duration_minutes ?? undefined,
           employeeId: employeeId ? employeeId.toString() : '',
           taskTypeId: taskTypeId ? taskTypeId.toString() : '',
           organizationId: organizationId ? organizationId.toString() : '',
@@ -700,6 +701,7 @@ class APIService {
       const taskToCreate = {
         date: task.date,
         time: task.time || '',
+        duration: task.duration !== undefined ? task.duration : undefined,
         employeeId: task.employeeId ? parseInt(task.employeeId) : null,
         taskTypeId: parseInt(task.taskTypeId),
         organizationId: parseInt(task.organizationId),
@@ -734,6 +736,7 @@ class APIService {
       const taskToUpdate: any = {};
       if (task.date) taskToUpdate.date = task.date;
       if (task.time !== undefined) taskToUpdate.time = task.time;
+      if (task.duration !== undefined) taskToUpdate.duration = task.duration;
       if (task.employeeId !== undefined) taskToUpdate.employeeId = task.employeeId ? parseInt(task.employeeId) : null;
       if (task.taskTypeId) taskToUpdate.taskTypeId = parseInt(task.taskTypeId);
       if (task.organizationId) taskToUpdate.organizationId = parseInt(task.organizationId);

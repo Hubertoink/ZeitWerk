@@ -84,6 +84,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setExportFolder: (path) => ipcRenderer.invoke('exportFolder:set', path),
   clearExportFolder: () => ipcRenderer.invoke('exportFolder:clear'),
   writeExportFile: (fileName, content, options) => ipcRenderer.invoke('fs:writeExportFile', fileName, content, options || {}),
+  generatePdfFromHtml: (html, options) => ipcRenderer.invoke('pdf:generateFromHtml', html, options || {}),
 
   // Photos (employee avatars)
   importEmployeePhoto: () => ipcRenderer.invoke('photos:import'),

@@ -109,6 +109,8 @@ export interface Task {
   taskTypeId: string;
   date: string;
   time?: string;
+  // Dauer in Minuten (optional). Wenn gesetzt, wird statt einer festen Uhrzeit eine Dauer angezeigt.
+  duration?: number;
   notes?: string;
   organizationId: string;
   taskTypeName?: string;

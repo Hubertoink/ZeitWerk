@@ -74,6 +74,7 @@ interface IElectronAPI {
   setExportFolder: (path: string) => Promise<{ success: boolean; path?: string; error?: string }>;
   clearExportFolder: () => Promise<{ success: boolean; error?: string }>;
   writeExportFile: (fileName: string, content: string, options?: { base64?: boolean; encoding?: string }) => Promise<{ success: boolean; path?: string; error?: string }>;
+  generatePdfFromHtml?: (html: string, options?: { fileName?: string; landscape?: boolean }) => Promise<{ success: boolean; path?: string; error?: string }>;
   
   // Database Path Management
   getDatabasePathInfo: () => Promise<{

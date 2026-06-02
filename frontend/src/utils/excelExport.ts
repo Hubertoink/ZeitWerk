@@ -975,33 +975,39 @@ export function buildWeekExcelFromTasks(params: {
         return;
       }
 
+      const formatDuration = (mins?: number) => {
+        if (!mins && mins !== 0) return '';
+        const h = mins / 60;
+        const s = Number(h % 1 === 0 ? h.toFixed(0) : h.toFixed(2));
+        return `${s} Std.`;
+      };
+
+      const richText = tasks.flatMap((task: any, index: number) => {
+        const parts: Array<{ text: string; color?: string; bold?: boolean }> = [];
+        const timePart = task.time ? `${task.time} Uhr · ` : '';
+        const durationPart = task.duration ? `${formatDuration(task.duration)} · ` : '';
+        // Title line (bold)
+        parts.push({ text: `${timePart}${durationPart}${task.taskTypeName || 'Aufgabe'}`, color: task.taskTypeColor || '#90A4AE', bold: true });
+        // Notes line(s)
+        if (task.notes) {
+          parts.push({ text: `\n${task.notes}`, color: undefined, bold: false });
+        }
+        // Separate tasks with an extra newline
+        if (index < tasks.length - 1) parts.push({ text: '\n', color: undefined, bold: false });
+        return parts;
+      });
+
+      // Build plain text fallback (single-line preview)
       const label = tasks.map((task: any) => {
         const timeLabel = task.time ? `${task.time} Uhr · ` : '';
+        const durationLabel = task.duration ? `${formatDuration(task.duration)} · ` : '';
         const noteLabel = task.notes ? `\n${task.notes}` : '';
-        return `${timeLabel}${task.taskTypeName || 'Aufgabe'}${noteLabel}`;
+        return `${timeLabel}${durationLabel}${task.taskTypeName || 'Aufgabe'}${noteLabel}`;
       }).join(' \n ');
-
-      const richText = tasks.length > 1
-        ? tasks.flatMap((task: any, index: number) => {
-            const lines = [
-              `${task.time ? `${task.time} Uhr · ` : ''}${task.taskTypeName || 'Aufgabe'}`,
-              ...(task.notes ? [task.notes] : [])
-            ];
-            const parts = lines.map((line, lineIndex) => ({
-              text: `${line}${lineIndex < lines.length - 1 ? '\n' : ''}`,
-              color: task.taskTypeColor || '#90A4AE',
-              bold: lineIndex === 0
-            }));
-            if (index < tasks.length - 1) {
-              parts.push({ text: '\n', color: undefined, bold: false });
-            }
-            return parts;
-          })
-        : undefined;
 
       row.push({
         text: label,
-        richText,
+        richText: richText.length > 0 ? richText : undefined,
         bg: tasks.length === 1 ? (tasks[0].taskTypeColor || '#90A4AE') : undefined,
         color: tasks.length === 1 ? '#ffffff' : undefined
       });

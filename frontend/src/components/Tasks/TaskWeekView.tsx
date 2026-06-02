@@ -39,6 +39,7 @@ import {
   Group as GroupIcon,
   Person as PersonIcon
 } from '@mui/icons-material';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { addDays, format, isSameDay, startOfWeek } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { useSettings } from '../../contexts/SettingsContext';
@@ -110,6 +111,8 @@ const TaskWeekView: React.FC = () => {
     day: null as Date | null,
     taskType: null as any,
     time: '',
+    useDuration: false,
+    durationHours: '' as number | string,
     notes: ''
   });
   const [editTaskDialog, setEditTaskDialog] = useState({ open: false, task: null as any });
@@ -168,7 +171,7 @@ const TaskWeekView: React.FC = () => {
       }
 
       if (event.key === 'Escape') {
-        setCreateTaskDialog({ open: false, employeeId: null, employeeName: '', day: null, taskType: null, time: '', notes: '' });
+        setCreateTaskDialog({ open: false, employeeId: null, employeeName: '', day: null, taskType: null, time: '', useDuration: false, durationHours: '', notes: '' });
         setEditTaskDialog({ open: false, task: null });
         setTaskTypeDialog({ open: false, name: '', color: '#5C6BC0', description: '' });
         setTaskTypeDeleteMode(false);
@@ -281,11 +284,13 @@ const TaskWeekView: React.FC = () => {
       day,
       taskType,
       time: '',
+      useDuration: false,
+      durationHours: '',
       notes: taskType.description || ''
     });
   }, []);
 
-  const handleCreateTask = useCallback(async (taskType: any, employeeId: number, day: Date, options: { notes?: string; time?: string } = {}) => {
+  const handleCreateTask = useCallback(async (taskType: any, employeeId: number, day: Date, options: { notes?: string; time?: string; duration?: number } = {}) => {
     const employee = employees.find((entry: any) => entry.id?.toString?.() === employeeId.toString());
     const organizationId = (selectedOrganization?.id ?? employee?.organizationId)?.toString?.();
     const date = format(day, 'yyyy-MM-dd');
@@ -306,6 +311,7 @@ const TaskWeekView: React.FC = () => {
         employeeId: employeeId.toString(),
         date,
         time: options.time || '',
+        duration: options.duration,
         notes: options.notes || taskType.description || '',
         organizationId
       })).unwrap();
@@ -367,7 +373,7 @@ const TaskWeekView: React.FC = () => {
       return;
     }
 
-    await handleCreateTask(taskType, employeeId, day, { notes: task.notes || '', time: task.time || '' });
+    await handleCreateTask(taskType, employeeId, day, { notes: task.notes || '', time: task.time || '', duration: task.duration });
   }, [handleCreateTask, visibleTaskTypes]);
 
   const handleDeleteTask = useCallback(async (taskId: string | number) => {
@@ -392,6 +398,7 @@ const TaskWeekView: React.FC = () => {
         id: parseInt(editTaskDialog.task.id, 10),
         data: {
           time: editTaskDialog.task.time || '',
+          duration: editTaskDialog.task.duration,
           notes: editTaskDialog.task.notes || ''
         }
       })).unwrap();
@@ -407,6 +414,143 @@ const TaskWeekView: React.FC = () => {
       });
     }
   }, [dispatch, editTaskDialog.task, refreshTasks]);
+
+  const buildEmployeePdfHtml = useCallback((employee: any, days: Date[], getTasks: (id: number, day: Date) => any[], options?: { logoDataUrl?: string; recipient?: string }) => {
+    const title = `Aufgaben für ${employee.firstName || ''} ${employee.lastName || ''}`;
+    const range = days.length ? `${format(days[0], 'dd.MM.yyyy')} - ${format(days[days.length - 1], 'dd.MM.yyyy')}` : '';
+    const logo = options?.logoDataUrl ? `<img src="${options.logoDataUrl}" style="height:36px;margin-right:12px;vertical-align:middle"/>` : '';
+    const recipientLine = options?.recipient ? `<div style="font-size:13px;margin-top:6px;">Empfänger: <strong>${options.recipient}</strong></div>` : '';
+
+    const getContrastColor = (hex?: string) => {
+      try {
+        if (!hex) return '#000';
+        const h = hex.replace('#', '');
+        const r = parseInt(h.substring(0, 2), 16);
+        const g = parseInt(h.substring(2, 4), 16);
+        const b = parseInt(h.substring(4, 6), 16);
+        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+        return luminance > 186 ? '#000' : '#fff';
+      } catch (e) {
+        return '#000';
+      }
+    };
+
+    const cellHtml = (task: any) => {
+      const timePart = task.time ? `${task.time} Uhr` : '';
+      const durationPart = task.duration ? `${(task.duration/60)} Std.` : '';
+      const titleText = `${timePart}${timePart && (durationPart || task.taskTypeName) ? ' · ' : ''}${durationPart}${(durationPart && task.taskTypeName) ? ' · ' : ''}${task.taskTypeName || ''}`;
+      const notes = task.notes ? `<div style="margin-top:6px;color:inherit;">${task.notes.replace(/\n/g, '<br/>')}</div>` : '';
+      const bg = task.taskTypeColor || '#dddddd';
+      const color = getContrastColor(bg);
+      return `<div style="background:${bg};color:${color};padding:8px;border-radius:8px;margin-bottom:6px;">
+                <div style="font-weight:700;margin-bottom:4px;">${titleText}</div>
+                ${notes}
+              </div>`;
+    };
+
+    const cols = days.map((d) => `<th style="padding:8px;border:1px solid #ddd;background:#f5f5f5">${format(d, 'EEE dd.MM', { locale: de })}</th>`).join('');
+    const cells = days.map((d) => {
+      const tasks = getTasks(employee.id, d) || [];
+      if (!tasks.length) return `<td style="padding:8px;border:1px solid #ddd;min-width:120px"></td>`;
+      const inner = tasks.map((t: any) => cellHtml(t)).join('<hr style="border:none;border-top:1px solid #eee;margin:6px 0;"/>');
+      return `<td style="padding:8px;border:1px solid #ddd;vertical-align:top;min-width:140px">${inner}</td>`;
+    }).join('');
+
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+      <style>
+        @page { size: A4 landscape; }
+        body { font-family: Arial, Helvetica, sans-serif; color: #111; padding: 16px; }
+        h1 { font-size: 18px; }
+        table { border-collapse: collapse; width: 100%; margin-top:12px }
+        th, td { text-align: left }
+      </style>
+    </head><body>
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div style="display:flex;align-items:center">
+          ${logo}
+          <div>
+            <h1 style="margin:0;padding:0">${title}</h1>
+            <div style="color:#666">Organisation: ${selectedOrganization?.name || '-'} &nbsp;|&nbsp; Zeitraum: ${range}</div>
+            ${recipientLine}
+          </div>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th style="padding:8px;border:1px solid #ddd;background:#f5f5f5;min-width:160px">Mitarbeiter</th>${cols}</tr></thead>
+        <tbody>
+          <tr>
+            <td style="padding:8px;border:1px solid #ddd;vertical-align:top">${employee.firstName || ''} ${employee.lastName || ''}<div style="color:#666">${employee.position || ''}</div></td>
+            ${cells}
+          </tr>
+        </tbody>
+      </table>
+    </body></html>`;
+
+    return html;
+  }, [selectedOrganization]);
+
+  const handleExportEmployeePdf = useCallback(async (employee: any) => {
+    try {
+      // Attempt to inline app logo and determine recipient
+      let logoDataUrl: string | undefined = undefined;
+      try {
+        // Try fetching public logo (works in dev and production when served)
+        const resp = await fetch('./ZeitWerk-Logo.png');
+        if (resp && resp.ok) {
+          const blob = await resp.blob();
+          // Convert blob to data URL in browser
+          logoDataUrl = await new Promise<string | undefined>((resolve) => {
+            try {
+              const fr = new FileReader();
+              fr.onload = () => resolve(typeof fr.result === 'string' ? fr.result : undefined);
+              fr.onerror = () => resolve(undefined);
+              fr.readAsDataURL(blob);
+            } catch (_e) { resolve(undefined); }
+          });
+        }
+      } catch (e) {
+        // Ignore logo inlining errors
+      }
+
+      const recipient = employee.email || selectedOrganization?.contactEmail || '';
+
+      const html = buildEmployeePdfHtml(employee, weekDays, getTasksForEmployeeAndDay, { logoDataUrl, recipient: recipient });
+      // If running in Electron, use native PDF generation to directly save the file
+      if ((window as any).electronAPI && (window as any).electronAPI.generatePdfFromHtml) {
+        const safeName = `${employee.firstName || 'Mitarbeiter'}_${employee.lastName || ''}`.replace(/[^a-zA-Z0-9_-]+/g, '_');
+        const fileName = `Aufgaben_${safeName}_${format(weekDays[0] || new Date(), 'yyyyMMdd')}.pdf`;
+        const res = await (window as any).electronAPI.generatePdfFromHtml(html, { fileName, landscape: true });
+        if (res && res.success) {
+          setSnackbar({ open: true, message: `PDF gespeichert: ${res.path}`, severity: 'success' });
+        } else {
+          setSnackbar({ open: true, message: `PDF-Export fehlgeschlagen: ${res?.error || 'Unbekannter Fehler'}`, severity: 'error' });
+        }
+        return;
+      }
+
+      // Fallback: open print dialog in browser
+      const win = window.open('', '_blank', 'noopener,noreferrer');
+      if (!win) {
+        setSnackbar({ open: true, message: 'Popup blockiert. Bitte Popup-Erlaubnis aktivieren.', severity: 'error' });
+        return;
+      }
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      // Give browser a moment to render
+      setTimeout(() => {
+        try {
+          win.focus();
+          win.print();
+        } catch (err) {
+          console.error('Print failed', err);
+        }
+      }, 600);
+    } catch (err) {
+      console.error('Export employee PDF failed', err);
+      setSnackbar({ open: true, message: 'PDF-Export fehlgeschlagen', severity: 'error' });
+    }
+  }, [buildEmployeePdfHtml, weekDays, getTasksForEmployeeAndDay]);
 
   const handleExcelWeekExport = useCallback(async () => {
     try {
@@ -439,13 +583,18 @@ const TaskWeekView: React.FC = () => {
       return;
     }
 
+    const durationMinutes = createTaskDialog.useDuration && createTaskDialog.durationHours
+      ? Math.max(0, Math.round(Number(createTaskDialog.durationHours) * 60))
+      : undefined;
+
     const created = await handleCreateTask(createTaskDialog.taskType, createTaskDialog.employeeId, createTaskDialog.day, {
-      time: createTaskDialog.time,
+      time: createTaskDialog.useDuration ? '' : createTaskDialog.time,
+      duration: durationMinutes,
       notes: createTaskDialog.notes
     });
 
     if (created) {
-      setCreateTaskDialog({ open: false, employeeId: null, employeeName: '', day: null, taskType: null, time: '', notes: '' });
+      setCreateTaskDialog({ open: false, employeeId: null, employeeName: '', day: null, taskType: null, time: '', useDuration: false, durationHours: '', notes: '' });
     }
   }, [createTaskDialog, handleCreateTask]);
 
@@ -725,9 +874,9 @@ const TaskWeekView: React.FC = () => {
           </TableHead>
           <TableBody>
             {sortedEmployees.map((employee: any) => (
-              <TableRow key={employee.id}>
+              <TableRow key={employee.id} sx={{ '&:hover .employee-action': { display: 'inline-flex' } }}>
                 <TableCell sx={{ verticalAlign: 'top', borderRight: '1px solid', borderRightColor: 'divider' }}>
-                  <Box display="flex" alignItems="center" gap={1}>
+                  <Box display="flex" alignItems="center" gap={1} sx={{ position: 'relative' }}>
                     <Avatar
                       src={(employee.photoPath ? (window as any)?.electronAPI?.toFileUrl?.(employee.photoPath) : employee.photoUrl) || undefined}
                       sx={{ width: 32, height: 32, bgcolor: 'primary.main', fontSize: 14 }}
@@ -738,6 +887,23 @@ const TaskWeekView: React.FC = () => {
                       <Typography variant="subtitle2">{employee.firstName} {employee.lastName}</Typography>
                       <Typography variant="caption" color="text.secondary">{employee.position || 'Mitarbeiter'}</Typography>
                     </Box>
+                    <IconButton
+                      className="employee-action"
+                      size="small"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        await handleExportEmployeePdf(employee);
+                      }}
+                      sx={{
+                        position: 'absolute',
+                        right: 0,
+                        top: 0,
+                        display: 'none'
+                      }}
+                      title="Aufgaben als PDF exportieren"
+                    >
+                      <PictureAsPdfIcon />
+                    </IconButton>
                   </Box>
                 </TableCell>
                 {weekDays.map((day) => {
@@ -800,105 +966,113 @@ const TaskWeekView: React.FC = () => {
                       )}
 
                       {employeeTasks.map((task: any) => (
-                        <Tooltip
+                        <Card
                           key={task.id}
-                          title={[
-                            task.taskTypeName || 'Aufgabe',
-                            task.time ? `${task.time} Uhr` : '',
-                            task.notes || ''
-                          ].filter(Boolean).join(' | ')}
-                          arrow
+                          sx={(theme) => ({
+                            mb: 0.5,
+                            position: 'relative',
+                            cursor: 'grab',
+                            backgroundColor: task.taskTypeColor || '#90A4AE',
+                            color: theme.palette.getContrastText(task.taskTypeColor || '#90A4AE'),
+                            '&:hover .task-action': {
+                              display: 'flex'
+                            }
+                          })}
+                          draggable
+                          onDragStart={(event) => {
+                            const payload = JSON.stringify({ id: task.id });
+                            if (event.ctrlKey || event.metaKey) {
+                              event.dataTransfer.setData('copyTask', payload);
+                            } else {
+                              event.dataTransfer.setData('existingTask', payload);
+                            }
+                          }}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setEditTaskDialog({ open: true, task: { ...task } });
+                          }}
                         >
-                          <Card
-                            sx={(theme) => ({
-                              mb: 0.5,
-                              position: 'relative',
-                              cursor: 'grab',
-                              backgroundColor: task.taskTypeColor || '#90A4AE',
-                              color: theme.palette.getContrastText(task.taskTypeColor || '#90A4AE'),
-                              '&:hover .task-action': {
-                                display: 'flex'
-                              }
-                            })}
-                            draggable
-                            onDragStart={(event) => {
-                              const payload = JSON.stringify({ id: task.id });
-                              if (event.ctrlKey || event.metaKey) {
-                                event.dataTransfer.setData('copyTask', payload);
-                              } else {
-                                event.dataTransfer.setData('existingTask', payload);
-                              }
-                            }}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setEditTaskDialog({ open: true, task: { ...task } });
-                            }}
-                          >
-                            <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
-                              <Typography variant="body2" sx={{ fontWeight: 700, pr: 5 }}>
-                                {task.taskTypeName || 'Aufgabe'}
+                          <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
+                            <Typography variant="body2" sx={{ fontWeight: 700, pr: 5 }}>
+                              {task.taskTypeName || 'Aufgabe'}
+                            </Typography>
+                            {task.time ? (
+                              <Typography variant="caption" sx={{ display: 'block', opacity: 0.95, pr: 5 }}>
+                                {task.time} Uhr
                               </Typography>
-                              {task.time && (
-                                <Typography variant="caption" sx={{ display: 'block', opacity: 0.95, pr: 5 }}>
-                                  {task.time} Uhr
-                                </Typography>
-                              )}
-                              {task.notes && (
-                                <Typography variant="caption" sx={{ display: 'block', opacity: 0.9, pr: 5 }}>
-                                  {task.notes}
-                                </Typography>
-                              )}
+                            ) : task.duration ? (
+                              <Typography variant="caption" sx={{ display: 'block', opacity: 0.95, pr: 5 }}>
+                                {Number((task.duration / 60).toFixed(2))} Std.
+                              </Typography>
+                            ) : null}
+                            {task.notes && (
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 3,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'normal',
+                                  opacity: 0.9,
+                                  pr: 5,
+                                  lineHeight: '1.2em'
+                                }}
+                              >
+                                {task.notes}
+                              </Typography>
+                            )}
 
-                              <IconButton
-                                className="task-action"
-                                size="small"
-                                sx={{
-                                  position: 'absolute',
-                                  top: 2,
-                                  right: 28,
-                                  width: 22,
-                                  height: 22,
-                                  display: 'none',
-                                  bgcolor: 'primary.main',
-                                  color: 'white',
-                                  '&:hover': { bgcolor: 'primary.dark' }
-                                }}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setCopyBuffer(task);
-                                  setSnackbar({
-                                    open: true,
-                                    message: 'Kopiermodus aktiv: Zielzelle anklicken oder per Drag & Drop kopieren.',
-                                    severity: 'info'
-                                  });
-                                }}
-                              >
-                                <CopyIcon sx={{ fontSize: 14 }} />
-                              </IconButton>
-                              <IconButton
-                                className="task-action"
-                                size="small"
-                                sx={{
-                                  position: 'absolute',
-                                  top: 2,
-                                  right: 4,
-                                  width: 22,
-                                  height: 22,
-                                  display: 'none',
-                                  bgcolor: 'error.main',
-                                  color: 'white',
-                                  '&:hover': { bgcolor: 'error.dark' }
-                                }}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleDeleteTask(task.id);
-                                }}
-                              >
-                                <CloseIcon sx={{ fontSize: 14 }} />
-                              </IconButton>
-                            </CardContent>
-                          </Card>
-                        </Tooltip>
+                            <IconButton
+                              className="task-action"
+                              size="small"
+                              sx={{
+                                position: 'absolute',
+                                top: 2,
+                                right: 28,
+                                width: 22,
+                                height: 22,
+                                display: 'none',
+                                bgcolor: 'primary.main',
+                                color: 'white',
+                                '&:hover': { bgcolor: 'primary.dark' }
+                              }}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setCopyBuffer(task);
+                                setSnackbar({
+                                  open: true,
+                                  message: 'Kopiermodus aktiv: Zielzelle anklicken oder per Drag & Drop kopieren.',
+                                  severity: 'info'
+                                });
+                              }}
+                            >
+                              <CopyIcon sx={{ fontSize: 14 }} />
+                            </IconButton>
+                            <IconButton
+                              className="task-action"
+                              size="small"
+                              sx={{
+                                position: 'absolute',
+                                top: 2,
+                                right: 4,
+                                width: 22,
+                                height: 22,
+                                display: 'none',
+                                bgcolor: 'error.main',
+                                color: 'white',
+                                '&:hover': { bgcolor: 'error.dark' }
+                              }}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleDeleteTask(task.id);
+                              }}
+                            >
+                              <CloseIcon sx={{ fontSize: 14 }} />
+                            </IconButton>
+                          </CardContent>
+                        </Card>
                       ))}
                     </TableCell>
                   );
@@ -922,7 +1096,7 @@ const TaskWeekView: React.FC = () => {
 
       <Dialog
         open={createTaskDialog.open}
-        onClose={() => setCreateTaskDialog({ open: false, employeeId: null, employeeName: '', day: null, taskType: null, time: '', notes: '' })}
+        onClose={() => setCreateTaskDialog({ open: false, employeeId: null, employeeName: '', day: null, taskType: null, time: '', useDuration: false, durationHours: '', notes: '' })}
         fullWidth
         maxWidth="sm"
       >
@@ -948,14 +1122,34 @@ const TaskWeekView: React.FC = () => {
                 InputProps={{ readOnly: true }}
                 fullWidth
               />
-              <TextField
-                label="Uhrzeit"
-                type="time"
-                value={createTaskDialog.time}
-                onChange={(event) => setCreateTaskDialog((prev) => ({ ...prev, time: event.target.value }))}
-                fullWidth
-                InputLabelProps={{ shrink: true }}
+              <FormControlLabel
+                control={(
+                  <Checkbox
+                    checked={!!createTaskDialog.useDuration}
+                    onChange={(e) => setCreateTaskDialog((prev) => ({ ...prev, useDuration: !!e.target.checked }))}
+                  />
+                )}
+                label="Dauer statt Uhrzeit"
               />
+              {!createTaskDialog.useDuration ? (
+                <TextField
+                  label="Uhrzeit"
+                  type="time"
+                  value={createTaskDialog.time}
+                  onChange={(event) => setCreateTaskDialog((prev) => ({ ...prev, time: event.target.value }))}
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                />
+              ) : (
+                <TextField
+                  label="Dauer (Stunden)"
+                  type="number"
+                  value={createTaskDialog.durationHours}
+                  onChange={(event) => setCreateTaskDialog((prev) => ({ ...prev, durationHours: event.target.value }))}
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                />
+              )}
               <TextField
                 label="Notiz / Beschreibung"
                 value={createTaskDialog.notes}
@@ -968,7 +1162,7 @@ const TaskWeekView: React.FC = () => {
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setCreateTaskDialog({ open: false, employeeId: null, employeeName: '', day: null, taskType: null, time: '', notes: '' })}>
+          <Button onClick={() => setCreateTaskDialog({ open: false, employeeId: null, employeeName: '', day: null, taskType: null, time: '', useDuration: false, durationHours: '', notes: '' })}>
             Abbrechen
           </Button>
           <Button onClick={handleConfirmCreateTask} variant="contained">Anlegen</Button>
@@ -986,17 +1180,37 @@ const TaskWeekView: React.FC = () => {
                 InputProps={{ readOnly: true }}
                 fullWidth
               />
-              <TextField
-                label="Uhrzeit"
-                type="time"
-                value={editTaskDialog.task.time || ''}
-                onChange={(event) => setEditTaskDialog((prev) => ({
-                  ...prev,
-                  task: { ...prev.task, time: event.target.value }
-                }))}
-                fullWidth
-                InputLabelProps={{ shrink: true }}
+              <FormControlLabel
+                control={(
+                  <Checkbox
+                    checked={!!editTaskDialog.task.useDuration || !!editTaskDialog.task.duration}
+                    onChange={(e) => setEditTaskDialog((prev) => ({ ...prev, task: { ...prev.task, useDuration: !!e.target.checked } }))}
+                  />
+                )}
+                label="Dauer statt Uhrzeit"
               />
+              {!editTaskDialog.task.useDuration ? (
+                <TextField
+                  label="Uhrzeit"
+                  type="time"
+                  value={editTaskDialog.task.time || ''}
+                  onChange={(event) => setEditTaskDialog((prev) => ({
+                    ...prev,
+                    task: { ...prev.task, time: event.target.value }
+                  }))}
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                />
+              ) : (
+                <TextField
+                  label="Dauer (Stunden)"
+                  type="number"
+                  value={editTaskDialog.task.duration ? String((editTaskDialog.task.duration / 60)) : (editTaskDialog.task.durationHours || '')}
+                  onChange={(event) => setEditTaskDialog((prev) => ({ ...prev, task: { ...prev.task, duration: Math.max(0, Math.round(Number(event.target.value) * 60)) } }))}
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                />
+              )}
               <TextField
                 label="Notiz / Beschreibung"
                 value={editTaskDialog.task.notes || ''}
