@@ -73,7 +73,6 @@ const EmployeeList: React.FC = () => {
   const { employees, error } = useAppSelector((state: any) => state.employees);
   const { organizations } = useAppSelector((state: any) => state.organizations);
   const theme = useTheme();
-  const isCompactLayout = useMediaQuery(theme.breakpoints.down('lg'));
   const isSmallScreen = useMediaQuery(theme.breakpoints.down('md'));
   const isCardLayout = useMediaQuery(theme.breakpoints.down('sm'));
 
@@ -387,9 +386,6 @@ const EmployeeList: React.FC = () => {
           <Typography variant="h4" component="h1">
             Mitarbeiter
           </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Die Tabelle bleibt in einem eigenen Scrollbereich, damit horizontales Scrollen auch bei vielen Eintr\u00e4gen direkt erreichbar ist.
-          </Typography>
         </Box>
         <Button
           variant="contained"
@@ -442,18 +438,6 @@ const EmployeeList: React.FC = () => {
               ),
             }}
           />
-
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-            <Chip
-              color="primary"
-              variant={hasActiveSearch ? 'filled' : 'outlined'}
-              label={hasActiveSearch ? `${visibleEmployeesCount} Treffer` : `${employees.length} Mitarbeiter`}
-            />
-            <Chip
-              variant="outlined"
-              label={isCompactLayout ? 'Horizontales Scrollen bleibt im Tabellenbereich sichtbar' : 'Kopfzeile bleibt beim Scrollen sichtbar'}
-            />
-          </Box>
         </Box>
       </Paper>
 

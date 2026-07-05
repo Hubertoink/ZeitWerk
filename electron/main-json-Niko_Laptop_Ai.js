@@ -136,15 +136,6 @@ class DienstplanApp {
             this.mainWindow = null;
         });
 
-        // Debug: Log all page events
-        this.mainWindow.webContents.on('did-start-loading', () => {
-            console.log('🔄 Page started loading...');
-        });
-
-        this.mainWindow.webContents.on('did-finish-load', () => {
-            console.log('✅ Page finished loading');
-        });
-
         this.mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
             console.error('❌ Page failed to load:', errorCode, errorDescription, validatedURL);
         });

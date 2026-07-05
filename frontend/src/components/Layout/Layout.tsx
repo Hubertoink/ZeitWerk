@@ -155,9 +155,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       icon: <PeopleIcon />,
       id: 'employees'
     },
-    { 
-      text: 'Organisationseinheiten', 
-      path: '/organizations', 
+    {
+      text: 'Organisationen',
+      path: '/organizations',
       icon: <BusinessIcon />,
       id: 'organizations'
     },

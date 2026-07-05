@@ -28,9 +28,11 @@ import {
   Checkbox,
   FormControlLabel,
   FormGroup,
-  Divider
+  Divider,
+  Menu,
+  MenuItem
 } from '@mui/material';
-import { ChevronLeft, ChevronRight, Person as PersonIcon, Close as CloseIcon, ContentCopy as CopyIcon, InfoOutlined, DragIndicator, Reorder as ReorderIcon, DeleteSweep as DeleteSweepIcon, Group as GroupIcon } from '@mui/icons-material';
+import { ChevronLeft, ChevronRight, Person as PersonIcon, Close as CloseIcon, ContentCopy as CopyIcon, InfoOutlined, DragIndicator, Reorder as ReorderIcon, DeleteSweep as DeleteSweepIcon, Group as GroupIcon, MoreHoriz as MoreHorizIcon } from '@mui/icons-material';
 import type { Theme } from '@mui/material/styles';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { setWeekDate, navigateWeek } from '../../store/slices/calendarSlice';
@@ -183,6 +185,7 @@ const WeekView: React.FC = () => {
   }>({ open: false, employee: null, shiftIds: [] });
   // Reorder mode for employees
   const [isReorderMode, setIsReorderMode] = useState(false);
+  const [reorderMenuAnchor, setReorderMenuAnchor] = useState<HTMLElement | null>(null);
   const [draftEmployeeOrder, setDraftEmployeeOrder] = useState<string[]>([]);
   const [employeeSelectionDialogOpen, setEmployeeSelectionDialogOpen] = useState(false);
   const [draftVisibleEmployeeIds, setDraftVisibleEmployeeIds] = useState<string[]>([]);
@@ -1228,6 +1231,13 @@ const WeekView: React.FC = () => {
       setSnackbar({ open: true, message: 'Fehler beim Speichern der Reihenfolge', severity: 'error' });
     }
   };
+
+  const setAlphabeticalEmployeeOrder = () => {
+    const ui = settings?.ui || ({} as any);
+    updateSettings({ ...settings, ui: { ...ui, employeeOrderMode: 'alphabetical' } });
+    setIsReorderMode(false);
+  };
+
   const cancelReorder = () => {
     setIsReorderMode(false);
   };
@@ -1337,41 +1347,98 @@ const WeekView: React.FC = () => {
                 <GroupIcon fontSize="small" />
               </IconButton>
             </Tooltip>
-            {baseEmployees.length > 0 && (
-              <Chip
-                size="small"
-                label={`${filteredEmployees.length}/${baseEmployees.length} Mitarbeiter`}
-                color={visibleEmployeeIdsForOrg ? 'primary' : 'default'}
-                variant={visibleEmployeeIdsForOrg ? 'filled' : 'outlined'}
-              />
-            )}
-            <Tooltip title={isReorderMode ? 'Reihenfolge beenden' : 'Reihenfolge bearbeiten'}>
-              <IconButton
-                onClick={() => setIsReorderMode(v => !v)}
-                color={isReorderMode ? 'warning' : 'default'}
-                size="small"
+            <Button
+              variant="outlined"
+              startIcon={<ReorderIcon fontSize="small" />}
+              endIcon={<MoreHorizIcon fontSize="small" />}
+              onClick={(event) => setReorderMenuAnchor(event.currentTarget)}
+              size="small"
+              sx={{
+                color: 'primary.main',
+                borderColor: 'divider',
+                backgroundColor: 'background.paper',
+                textTransform: 'none',
+                fontWeight: 700,
+                '&:hover': {
+                  borderColor: 'primary.main',
+                  backgroundColor: 'action.hover',
+                },
+              }}
+            >
+              Reihenfolge
+            </Button>
+            <Menu
+              anchorEl={reorderMenuAnchor}
+              open={Boolean(reorderMenuAnchor)}
+              onClose={() => setReorderMenuAnchor(null)}
+              PaperProps={{
+                sx: {
+                  mt: 0.75,
+                  minWidth: 210,
+                  bgcolor: 'background.paper',
+                  color: 'text.primary',
+                  border: 1,
+                  borderColor: 'divider',
+                  boxShadow: (theme) => theme.palette.mode === 'dark'
+                    ? '0 8px 24px rgba(0,0,0,0.45)'
+                    : '0 8px 24px rgba(0,0,0,0.12)',
+                  '& .MuiMenuItem-root': {
+                    bgcolor: 'transparent',
+                    color: 'text.primary',
+                    minHeight: 40,
+                    '&:hover': {
+                      bgcolor: 'action.hover',
+                    },
+                    '&.Mui-disabled': {
+                      color: 'text.disabled',
+                    },
+                  },
+                },
+              }}
+            >
+              {!isReorderMode && (
+                <MenuItem
+                  onClick={() => {
+                    setReorderMenuAnchor(null);
+                    setIsReorderMode(true);
+                  }}
+                >
+                  Reihenfolge bearbeiten
+                </MenuItem>
+              )}
+              {isReorderMode && (
+                <MenuItem
+                  onClick={() => {
+                    setReorderMenuAnchor(null);
+                    persistCustomOrder();
+                  }}
+                >
+                  Speichern
+                </MenuItem>
+              )}
+              {isReorderMode && (
+                <MenuItem
+                  onClick={() => {
+                    setReorderMenuAnchor(null);
+                    cancelReorder();
+                  }}
+                >
+                  Abbrechen
+                </MenuItem>
+              )}
+              {isReorderMode && <Divider />}
+              <MenuItem
+                onClick={() => {
+                  setReorderMenuAnchor(null);
+                  setAlphabeticalEmployeeOrder();
+                }}
+                disabled={(settings?.ui?.employeeOrderMode || 'alphabetical') === 'alphabetical' && !isReorderMode}
               >
-                <ReorderIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
+                Alphabetisch sortieren
+              </MenuItem>
+            </Menu>
             {settings?.ui?.employeeOrderMode === 'custom' && !isReorderMode && (
               <Chip size="small" label="Eigene Reihenfolge aktiv" color="info" />
-            )}
-            {isReorderMode && (
-              <>
-                <Button
-                  variant="text"
-                  onClick={() => {
-                    const ui = settings?.ui || ({} as any);
-                    updateSettings({ ...settings, ui: { ...ui, employeeOrderMode: 'alphabetical' } });
-                  }}
-                  disabled={(settings?.ui?.employeeOrderMode || 'alphabetical') === 'alphabetical'}
-                >
-                  Alphabetisch
-                </Button>
-                <Button variant="outlined" onClick={cancelReorder}>Abbrechen</Button>
-                <Button variant="contained" onClick={persistCustomOrder}>Speichern</Button>
-              </>
             )}
           </Box>
           <Tooltip title="Woche kopieren">
@@ -1875,7 +1942,7 @@ const WeekView: React.FC = () => {
                                 backdropFilter: 'none !important',
                                 WebkitBackdropFilter: 'none !important',
                                 transition: 'none !important',
-                                '& .delete-button': { display: 'flex' }
+                                '& .shift-actions': { display: 'flex' }
                               }
                             })}
                             draggable
@@ -1938,62 +2005,61 @@ const WeekView: React.FC = () => {
                                   );
                                 })()}
                               {/* Copy + Delete Buttons */}
-                              <IconButton
-                                className="delete-button"
-                                size="small"
-                                sx={{
-                                  position: 'absolute',
-                                  top: 2,
-                                  right: 28,
-                                  width: 22,
-                                  height: 22,
-                                  display: 'none',
-                                  bgcolor: 'primary.main',
-                                  color: 'white',
-                                  '&:hover': { bgcolor: 'primary.dark' },
-                                  minWidth: 'unset',
-                                  borderRadius: '50%',
-                                  p: 0,
-                                  alignItems: 'center',
-                                  justifyContent: 'center'
-                                }}
-                                title="Schicht kopieren (Strg+Ziehen geht auch)"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setCopyBuffer(shift);
-                                  setSnackbar({ open: true, message: 'Kopiermodus aktiv: Klicken Sie nun in eine Zielzelle', severity: 'success' });
-                                }}
-                              >
-                                <CopyIcon sx={{ fontSize: 14, lineHeight: 1 }} />
-                              </IconButton>
-                              <IconButton
-                                className="delete-button"
-                                size="small"
+                              <Box
+                                className="shift-actions"
                                 sx={{
                                   position: 'absolute',
                                   top: -8,
                                   right: -8,
-                                  width: 22,
-                                  height: 22,
                                   display: 'none',
-                                  bgcolor: 'error.main',
-                                  color: 'white',
-                                  boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
-                                  '&:hover': { bgcolor: 'error.dark' },
-                                  minWidth: 'unset',
-                                  borderRadius: '50%',
-                                  p: 0,
                                   alignItems: 'center',
-                                  justifyContent: 'center',
-                                  zIndex: 20
-                                }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteShift(shift.id);
+                                  gap: 0.5,
+                                  zIndex: 20,
                                 }}
                               >
-                                <CloseIcon sx={{ fontSize: 14, lineHeight: 1 }} />
-                              </IconButton>
+                                <IconButton
+                                  size="small"
+                                  sx={{
+                                    width: 22,
+                                    height: 22,
+                                    bgcolor: 'primary.main',
+                                    color: 'white',
+                                    boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+                                    '&:hover': { bgcolor: 'primary.dark' },
+                                    minWidth: 'unset',
+                                    borderRadius: '50%',
+                                    p: 0,
+                                  }}
+                                  title="Schicht kopieren (Strg+Ziehen geht auch)"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setCopyBuffer(shift);
+                                    setSnackbar({ open: true, message: 'Kopiermodus aktiv: Klicken Sie nun in eine Zielzelle', severity: 'success' });
+                                  }}
+                                >
+                                  <CopyIcon sx={{ fontSize: 14, lineHeight: 1 }} />
+                                </IconButton>
+                                <IconButton
+                                  size="small"
+                                  sx={{
+                                    width: 22,
+                                    height: 22,
+                                    bgcolor: 'error.main',
+                                    color: 'white',
+                                    boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+                                    '&:hover': { bgcolor: 'error.dark' },
+                                    minWidth: 'unset',
+                                    borderRadius: '50%',
+                                    p: 0,
+                                  }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteShift(shift.id);
+                                  }}
+                                >
+                                  <CloseIcon sx={{ fontSize: 14, lineHeight: 1 }} />
+                                </IconButton>
+                              </Box>
                             </CardContent>
                           </Card>
                           </Tooltip>

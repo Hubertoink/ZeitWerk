@@ -268,7 +268,7 @@ export const CustomThemeProvider: React.FC<{ children: React.ReactNode }> = ({ c
               ? '1px solid rgba(255, 255, 255, 0.1)'
               : '1px solid rgba(255, 255, 255, 0.3)',
             borderRadius: theme.spacing(2),
-            transition: 'all 0.3s ease-in-out',
+            transition: 'background-color 0.2s ease, border-color 0.2s ease',
             boxShadow: mode === 'dark'
               ? '0 4px 20px rgba(0, 0, 0, 0.4)'
               : '0 4px 20px rgba(103, 80, 164, 0.1)',
@@ -276,10 +276,6 @@ export const CustomThemeProvider: React.FC<{ children: React.ReactNode }> = ({ c
               backgroundColor: mode === 'dark' 
                 ? (lowGpu ? '#1D1B20' : 'rgba(29, 27, 32, 0.9)') 
                 : (lowGpu ? '#FFFFFF' : 'rgba(255, 255, 255, 0.85)'),
-              transform: 'translateY(-2px)',
-              boxShadow: mode === 'dark'
-                ? '0 8px 30px rgba(0, 0, 0, 0.5)'
-                : '0 8px 32px rgba(103, 80, 164, 0.15)',
               border: mode === 'dark'
                 ? '1px solid rgba(255, 255, 255, 0.2)'
                 : '1px solid rgba(255, 255, 255, 0.5)',
@@ -445,6 +441,30 @@ export const CustomThemeProvider: React.FC<{ children: React.ReactNode }> = ({ c
             borderBottom: mode === 'dark'
               ? '1px solid rgba(255, 255, 255, 0.12)'
               : '1px solid rgba(0, 0, 0, 0.12)',
+          },
+        },
+      },
+      MuiTooltip: {
+        styleOverrides: {
+          tooltip: {
+            backgroundColor: mode === 'dark' ? '#2B2930' : '#FFFFFF',
+            color: mode === 'dark' ? '#E6E1E5' : '#1D1B20',
+            border: mode === 'dark'
+              ? '1px solid rgba(255, 255, 255, 0.16)'
+              : '1px solid rgba(103, 80, 164, 0.22)',
+            boxShadow: mode === 'dark'
+              ? '0 8px 24px rgba(0, 0, 0, 0.45)'
+              : '0 8px 24px rgba(103, 80, 164, 0.16)',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+          },
+          arrow: {
+            color: mode === 'dark' ? '#2B2930' : '#FFFFFF',
+            '&::before': {
+              border: mode === 'dark'
+                ? '1px solid rgba(255, 255, 255, 0.16)'
+                : '1px solid rgba(103, 80, 164, 0.22)',
+            },
           },
         },
       },
