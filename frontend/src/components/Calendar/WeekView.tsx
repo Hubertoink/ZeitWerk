@@ -191,11 +191,21 @@ const WeekView: React.FC = () => {
   const [draftVisibleEmployeeIds, setDraftVisibleEmployeeIds] = useState<string[]>([]);
   // Dynamic height calc for inner table to avoid outer page scroll
   const tableRef = useRef<HTMLDivElement | null>(null);
+  const controlsRef = useRef<HTMLDivElement | null>(null);
+  const [tableWidth, setTableWidth] = useState(0);
+  // Scale from the available content width, including sidebar and window zoom.
+  const tableDensity = Math.max(0, Math.min(1, (tableWidth - 720) / 560));
+  const employeeColumnWidth = Math.round(120 + tableDensity * 80);
+  const summaryColumnWidth = Math.round(80 + tableDensity * 64);
+  const minimumTableWidth = employeeColumnWidth + weekDays.length * 76 + summaryColumnWidth;
+  const cellPadding = 0.5 + tableDensity;
+  const tableFontSize = `${0.7 + tableDensity * 0.175}rem`;
   const [tableHeight, setTableHeight] = useState<number | null>(null);
   useLayoutEffect(() => {
     const compute = () => {
       if (tableRef.current) {
         const rect = tableRef.current.getBoundingClientRect();
+        setTableWidth(tableRef.current.clientWidth);
         const vh = window.innerHeight;
         // small bottom gap to avoid accidental overflow due to borders/shadows
         const footerGap = 8;
@@ -204,8 +214,14 @@ const WeekView: React.FC = () => {
       }
     };
     compute();
+    const observer = new ResizeObserver(compute);
+    if (controlsRef.current) observer.observe(controlsRef.current);
+    if (tableRef.current) observer.observe(tableRef.current);
     window.addEventListener('resize', compute);
-    return () => window.removeEventListener('resize', compute);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', compute);
+    };
   }, []);
   // Shortcuts popover state (click to toggle)
   const [shortcutsAnchor, setShortcutsAnchor] = useState<HTMLElement | null>(null);
@@ -1287,11 +1303,12 @@ const WeekView: React.FC = () => {
   }, [baseEmployees, draftVisibleEmployeeIds, selectedOrgId, settings, updateSettings]);
 
   return (
-    <Box sx={{ px: 3, pt: 3, pb: 0, overflow: 'hidden' }}>
+    <Box sx={{ px: { xs: 1, sm: 2, lg: 3 }, pt: { xs: 1.5, sm: 3 }, pb: 1, minWidth: 0 }}>
+      <Box ref={controlsRef}>
       {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1.5, mb: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Typography variant="h4" component="h1">
+          <Typography variant="h4" component="h1" sx={{ fontSize: { xs: '1.5rem', sm: '2rem' } }}>
             Wochenansicht
           </Typography>
           <IconButton
@@ -1335,9 +1352,9 @@ const WeekView: React.FC = () => {
           </Popover>
         </Box>
         
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', minWidth: 0, gap: 1 }}>
           {/* Sorting controls */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', minWidth: 0, gap: 1 }}>
             <Tooltip title="Sichtbare Mitarbeiter auswählen">
               <IconButton
                 onClick={openEmployeeSelectionDialog}
@@ -1511,6 +1528,7 @@ const WeekView: React.FC = () => {
             color="primary"
             variant="filled"
             sx={{
+              maxWidth: '100%',
               fontWeight: 600,
               bgcolor: 'primary.main',
               color: 'primary.contrastText',
@@ -1520,8 +1538,11 @@ const WeekView: React.FC = () => {
           <Box
             sx={{
               display: 'flex',
+              flexWrap: 'wrap',
+              maxWidth: '100%',
+              minWidth: 0,
               alignItems: 'center',
-              gap: 1,
+              gap: 0.5,
               px: 0.75,
               py: 0.25,
               borderRadius: 1,
@@ -1533,7 +1554,7 @@ const WeekView: React.FC = () => {
             }}
           >
             <IconButton onClick={handlePrevWeek} size="small"><ChevronLeft /></IconButton>
-            <Typography variant="subtitle1" sx={{ minWidth: 200, textAlign: 'center' }}>
+            <Typography variant="subtitle1" sx={{ minWidth: 0, flex: '1 1 160px', textAlign: 'center', fontSize: { xs: '0.85rem', sm: '1rem' } }}>
               {weekDays.length > 0 ? (
                 `${format(weekDays[0], 'dd.MM.yyyy', { locale: de })} - ${format(weekDays[weekDays.length - 1], 'dd.MM.yyyy', { locale: de })}`
               ) : (
@@ -1546,15 +1567,23 @@ const WeekView: React.FC = () => {
         </Box>
       )}
 
+      </Box>
+
       {/* Wochenansicht-Grid */}
       <TableContainer 
         component={Paper} 
         ref={tableRef}
+        tabIndex={0}
+        role="region"
+        aria-label="Wochenplan, horizontal und vertikal scrollbar"
         sx={{ 
           height: tableHeight || undefined,
           maxHeight: tableHeight ? undefined : 'calc(100dvh - 300px)',
           overflowY: 'auto',
-          overflowX: 'hidden',
+          overflowX: 'auto',
+          width: '100%',
+          maxWidth: '100%',
+          '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' },
           // avoid causing an extra outer scrollbar by ensuring inner scroll only when needed
           scrollbarGutter: 'stable',
           '@keyframes slideInFromRight': {
@@ -1570,6 +1599,7 @@ const WeekView: React.FC = () => {
         <Box
           key={slideKey}
           sx={{
+            minWidth: minimumTableWidth,
             animation: slideAnimationEnabled
               ? slideDirection === 'left'
                 ? 'slideInFromRight 280ms ease-out'
@@ -1579,10 +1609,29 @@ const WeekView: React.FC = () => {
               : 'none'
           }}
         >
-        <Table stickyHeader>
+        <Table stickyHeader sx={{
+          tableLayout: 'fixed',
+          minWidth: minimumTableWidth,
+          '& .MuiTableCell-root': {
+            px: cellPadding, py: 0.75 + tableDensity * 1.25,
+            fontSize: tableFontSize, overflowWrap: 'anywhere',
+          },
+          '& .MuiTypography-root': { fontSize: tableFontSize },
+          '& .MuiChip-root': { maxWidth: '100%', fontSize: tableFontSize },
+          '& .MuiChip-label': { px: cellPadding },
+          '& .MuiTableCell-root:first-of-type': {
+            position: 'sticky', left: 0, zIndex: 2, bgcolor: 'background.paper',
+          },
+          '& .MuiTableHead-root .MuiTableCell-root:first-of-type': { zIndex: 4 },
+        }}>
+          <colgroup>
+            <col style={{ width: employeeColumnWidth }} />
+            {weekDays.map(day => <col key={day.toISOString()} />)}
+            <col style={{ width: summaryColumnWidth }} />
+          </colgroup>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ minWidth: 150, fontWeight: 'bold', borderRight: '1px solid', borderRightColor: 'divider', backgroundColor: 'background.paper', zIndex: 3 }}>
+              <TableCell sx={{ fontWeight: 'bold', borderRight: '1px solid', borderRightColor: 'divider', backgroundColor: 'background.paper', zIndex: 3 }}>
                 Mitarbeiter
               </TableCell>
               {weekDays.map((day, index) => {
@@ -1597,7 +1646,7 @@ const WeekView: React.FC = () => {
                     key={index} 
                     align="center"
                     sx={{ 
-                      minWidth: 120,
+
                       fontWeight: 'bold',
                       backgroundColor: isToday ? 'primary.main' 
                         : vacation ? 'warning.50' 
@@ -1631,7 +1680,7 @@ const WeekView: React.FC = () => {
               <TableCell 
                 align="center" 
                 sx={{ 
-                  minWidth: 170, 
+
                   fontWeight: 'bold',
                   borderLeft: '3px solid',
                   borderLeftColor: 'divider'
@@ -1657,13 +1706,13 @@ const WeekView: React.FC = () => {
                     )}
                     <Avatar 
                       src={(employee.photoPath ? (window as any)?.electronAPI?.toFileUrl?.(employee.photoPath) : employee.photoUrl) || undefined}
-                      sx={{ width: 32, height: 32, bgcolor: 'primary.main', fontSize: 14 }}
+                      sx={{ display: tableWidth < 1000 ? 'none' : 'flex', flexShrink: 0, width: 32, height: 32, bgcolor: 'primary.main', fontSize: 14 }}
                     >
                       {(employee.photoPath || employee.photoUrl) ? null : <PersonIcon fontSize="small" />}
                     </Avatar>
                     <Box sx={{ minWidth: 0, flex: 1 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <Typography variant="subtitle2" sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <Typography variant="subtitle2" sx={{ overflowWrap: 'anywhere', lineHeight: 1.25 }}>
                           {employee.firstName} {employee.lastName}
                         </Typography>
                         <Tooltip title="Wochenschichten dieses Mitarbeiters löschen">
@@ -1811,7 +1860,7 @@ const WeekView: React.FC = () => {
                         handleCellClick(employee.id, day);
                       }}
                     >
-                      <Box sx={{ minHeight: 60 }}>
+                      <Box sx={{ minHeight: 40 + tableDensity * 20 }}>
                         {!isEmployeeActiveForDay && employeeInactiveReason && (
                           <Card
                             sx={{
@@ -1924,7 +1973,7 @@ const WeekView: React.FC = () => {
                               boxSizing: 'border-box',
                               backgroundColor: shift.shiftTypeColor || '#ccc',
                               color: theme.palette.getContrastText(shift.shiftTypeColor || '#ccc'),
-                              borderRadius: 8,
+                              borderRadius: tableWidth < 1000 ? 2 : 8,
                               border: '2px solid transparent',
                               boxShadow: 'none',
                               backdropFilter: 'none',
@@ -1960,7 +2009,7 @@ const WeekView: React.FC = () => {
                               handleEditShift(shift);
                             }}
                           >
-                            <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
+                            <CardContent sx={{ p: cellPadding * 0.65, fontSize: tableFontSize, '&:last-child': { pb: cellPadding * 0.65 } }}>
                               {(() => {
                                   const linkedType = shiftTypes.find((st: any) => st.id?.toString?.() === (shift.shiftTypeId || shift.shift_type_id)?.toString?.());
                                   const isAbs = shift.shiftTypeCategory === 'absence' || linkedType?.category === 'absence';
@@ -1978,7 +2027,7 @@ const WeekView: React.FC = () => {
                                   if (isAllDay) {
                                     // Nur Name anzeigen; Details (ganztägig, zählt nicht) bleiben im Tooltip
                                     return (
-                                      <Box sx={{ display: 'flex', flexDirection: 'column', fontWeight: 700, fontSize: '0.85rem', lineHeight: 1.1 }}>
+                                      <Box sx={{ display: 'flex', flexDirection: 'column', fontWeight: 700, fontSize: tableFontSize, lineHeight: 1.2 }}>
                                         <span style={{ fontWeight: 700 }}>{name}</span>
                                       </Box>
                                     );
@@ -1986,18 +2035,18 @@ const WeekView: React.FC = () => {
 
                                   // Drei Zeilen: Name, Zeiten, Pause
                                   return (
-                                    <Box sx={{ display: 'flex', flexDirection: 'column', fontSize: '0.8rem', fontWeight: 700, lineHeight: 1.1 }}>
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', fontSize: tableFontSize, fontWeight: 700, lineHeight: 1.2 }}>
                                       <span style={{ fontWeight: 700 }}>
                                         {name}
                                         {((shift.shiftTypeCountsTowardHours === false) || (linkedType?.countsTowardHours === false)) && !isAllDay && !isAbs ? ' · zählt nicht' : ''}
                                       </span>
                                       {hasTimes && (
-                                        <span style={{ fontSize: '0.7em', opacity: 0.95 }}>
+                                        <span style={{ fontSize: '0.65rem', opacity: 0.95 }}>
                                           {startStr} - {endStr}
                                         </span>
                                       )}
                                       {hasTimes && (
-                                        <span style={{ fontSize: '0.65em', opacity: 0.95 }}>
+                                        <span style={{ fontSize: '0.625rem', opacity: 0.95 }}>
                                           Pause: {breakMin} Min
                                         </span>
                                       )}

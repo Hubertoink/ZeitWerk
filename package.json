@@ -1,6 +1,6 @@
 {
   "name": "zeitwerk-app",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "description": "ZeitWerk - Moderne Dienstplan-App für die Jugendarbeit",
   "main": "electron/main-json.js",
   "homepage": "./",
